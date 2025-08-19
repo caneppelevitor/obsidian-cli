@@ -339,7 +339,9 @@ Created: ${new Date().toLocaleString()}
           return false;
       }
     } else {
-      return await this.addContent(input);
+      // Add "- " prefix to all text input to create bullet points
+      const contentWithPrefix = `- ${input}`;
+      return await this.addContent(contentWithPrefix);
     }
   }
 
@@ -445,10 +447,11 @@ Created: ${new Date().toLocaleString()}
           const lineNum = (index + 1).toString().padStart(3, ' ');
           return `${lineNum} │ ${line}`;
         });
-        // Reverse the lines to show from last line first
-        const reversedLines = numberedLines.reverse();
-        notesDisplay.setContent(reversedLines.join('\n'));
+        notesDisplay.setContent(numberedLines.join('\n'));
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);
+        
+        // Scroll to bottom to show latest content
+        notesDisplay.setScrollPerc(100);
       } else {
         notesDisplay.setContent('File is empty');
       }
