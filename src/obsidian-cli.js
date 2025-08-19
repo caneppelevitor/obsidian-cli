@@ -204,6 +204,40 @@ Created: ${new Date().toLocaleString()}
     return true;
   }
 
+  async insertContentAtLine(content, lineNumber) {
+    if (!this.currentFile) {
+      return false;
+    }
+
+    const lines = this.currentContent.split('\n');
+    
+    if (lineNumber >= 0 && lineNumber <= lines.length) {
+      lines.splice(lineNumber, 0, content);
+      this.currentContent = lines.join('\n');
+      await this.saveCurrentFileContent();
+      return true;
+    }
+    
+    return false;
+  }
+
+  async replaceContentAtLine(content, lineNumber) {
+    if (!this.currentFile) {
+      return false;
+    }
+
+    const lines = this.currentContent.split('\n');
+    
+    if (lineNumber > 0 && lineNumber <= lines.length) {
+      lines[lineNumber - 1] = content;
+      this.currentContent = lines.join('\n');
+      await this.saveCurrentFileContent();
+      return true;
+    }
+    
+    return false;
+  }
+
   createCustomInput() {
     let inputBuffer = '';
     let cursorPos = 0;
@@ -339,7 +373,40 @@ Created: ${new Date().toLocaleString()}
           return false;
       }
     } else {
-      // Add "- " prefix to all text input to create bullet points
+      const normalTextMatch = input.match(/^\[\]\s+(.+)$/);
+      if (normalTextMatch) {
+        const content = normalTextMatch[1].trim();
+        if (content) {
+          const contentWithPrefix = `- ${content}`;
+          return await this.addContent(contentWithPrefix);
+        }
+        return false;
+      }
+      
+      const newLineMatch = input.match(/^\[n(\d+)\]\s*(.*)$/);
+      if (newLineMatch) {
+        const lineNumber = parseInt(newLineMatch[1]);
+        const content = newLineMatch[2].trim();
+        
+        if (content) {
+          const contentWithPrefix = `- ${content}`;
+          return await this.insertContentAtLine(contentWithPrefix, lineNumber);
+        }
+        return false;
+      }
+      
+      const replaceLineMatch = input.match(/^\[(\d+)\]\s*(.*)$/);
+      if (replaceLineMatch) {
+        const lineNumber = parseInt(replaceLineMatch[1]);
+        const content = replaceLineMatch[2].trim();
+        
+        if (content) {
+          const contentWithPrefix = `- ${content}`;
+          return await this.replaceContentAtLine(contentWithPrefix, lineNumber);
+        }
+        return false;
+      }
+      
       const contentWithPrefix = `- ${input}`;
       return await this.addContent(contentWithPrefix);
     }
@@ -440,6 +507,16 @@ Created: ${new Date().toLocaleString()}
       censor: false
     });
 
+    const setPlaceholder = () => {
+      if (!inputBox.value || inputBox.value.trim() === '') {
+        inputBox.setValue('[]');
+        setTimeout(() => {
+          inputBox.screen.program.cup(inputBox.atop + inputBox.itop + 1, inputBox.aleft + inputBox.ileft + 1);
+          screen.render();
+        }, 10);
+      }
+    };
+
     const updateNotesDisplay = () => {
       if (this.currentContent) {
         const lines = this.currentContent.split('\n');
@@ -449,8 +526,6 @@ Created: ${new Date().toLocaleString()}
         });
         notesDisplay.setContent(numberedLines.join('\n'));
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);
-        
-        // Scroll to bottom to show latest content
         notesDisplay.setScrollPerc(100);
       } else {
         notesDisplay.setContent('File is empty');
@@ -460,22 +535,87 @@ Created: ${new Date().toLocaleString()}
 
 
     inputBox.on('submit', async (value) => {
-      if (value.trim()) {
+      const shouldIgnoreInput = (input) => {
+        if (!input || !input.trim()) return true;
+        
+        const exactIgnorePatterns = ['[]', '[ ]', '[  ]', '[ '];
+        
+        if (exactIgnorePatterns.includes(input) || exactIgnorePatterns.includes(input.trim())) {
+          return true;
+        }
+        
+        if (/^\[\s+[^\d].*\]$/.test(input) || /^\[\s*\]$/.test(input)) {
+          return true;
+        }
+        
+        if (/^\s/.test(input) && !/^\[\]\s/.test(input)) {
+          return true;
+        }
+        
+        return false;
+      };
+      
+      if (!shouldIgnoreInput(value)) {
         const success = await this.processInput(value);
         if (success !== false) {
           updateNotesDisplay();
         }
-        inputBox.clearValue();
-        inputBox.focus();
-        screen.render();
       }
+      
+      inputBox.clearValue();
+      setPlaceholder();
+      inputBox.focus();
+      screen.render();
     });
 
     inputBox.key('C-c', () => {
       process.exit(0);
     });
 
-    // Navigation between input box and text display
+    inputBox.key(['left'], () => {
+      const currentValue = inputBox.value || '';
+      const cursorPos = inputBox.screen.program.x - inputBox.aleft - inputBox.ileft;
+      
+      if (cursorPos > 0) {
+        inputBox.screen.program.cup(
+          inputBox.atop + inputBox.itop + 1, 
+          inputBox.aleft + inputBox.ileft + cursorPos - 1
+        );
+      }
+      screen.render();
+    });
+
+    inputBox.key(['right'], () => {
+      const currentValue = inputBox.value || '';
+      const cursorPos = inputBox.screen.program.x - inputBox.aleft - inputBox.ileft;
+      
+      if (cursorPos < currentValue.length) {
+        inputBox.screen.program.cup(
+          inputBox.atop + inputBox.itop + 1, 
+          inputBox.aleft + inputBox.ileft + cursorPos + 1
+        );
+      }
+      screen.render();
+    });
+
+    inputBox.key(['home'], () => {
+      inputBox.screen.program.cup(
+        inputBox.atop + inputBox.itop + 1, 
+        inputBox.aleft + inputBox.ileft
+      );
+      screen.render();
+    });
+
+    inputBox.key(['end'], () => {
+      const currentValue = inputBox.value || '';
+      inputBox.screen.program.cup(
+        inputBox.atop + inputBox.itop + 1, 
+        inputBox.aleft + inputBox.ileft + currentValue.length
+      );
+      screen.render();
+    });
+
+
     screen.key('tab', () => {
       if (inputBox.focused) {
         notesDisplay.focus();
@@ -492,6 +632,7 @@ Created: ${new Date().toLocaleString()}
     inputBox.on('focus', () => {
       inputContainer.style.border.fg = 'green';
       notesDisplay.style.border.fg = 'white';
+      setPlaceholder();
       screen.render();
     });
 
@@ -507,6 +648,7 @@ Created: ${new Date().toLocaleString()}
     });
 
     inputBox.focus();
+    setPlaceholder();
 
     updateNotesDisplay();
     screen.render();
