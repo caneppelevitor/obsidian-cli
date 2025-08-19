@@ -348,23 +348,11 @@ Created: ${new Date().toLocaleString()}
   }
 
   createClaudeStyleInterface() {
-    process.stdout.write('\x1b[0m');
-    process.stdout.write('\x1b[?25l');
-
     const screen = blessed.screen({
       smartCSR: true,
       title: 'Obsidian CLI',
       autoPadding: false,
-      warnings: false,
-      cursor: {
-        artificial: true,
-        shape: 'line',
-        blink: false,
-        color: 'white'
-      },
-      forceUnicode: false,
-      fullUnicode: false,
-      dockBorders: true
+      warnings: false
     });
 
     const notesDisplay = blessed.text({
@@ -374,24 +362,19 @@ Created: ${new Date().toLocaleString()}
       width: '100%-2',
       height: '70%',
       border: {
-        type: 'line',
-        fg: 'white'
+        type: 'line'
       },
       style: {
-        bg: '#000000',
-        fg: '#ffffff',
-        border: {
-          fg: '#444444'
-        }
+        fg: 'white'
       },
       content: '',
-      tags: false,
       scrollable: true,
       alwaysScroll: true,
-      focusable: false,
-      mouse: false,
-      clickable: false,
-      keyable: false,
+      focusable: true,
+      mouse: true,
+      clickable: true,
+      keyable: true,
+      keys: true,
       label: {
         text: ` ${path.basename(this.currentFile || 'No file')} `,
         side: 'left',
@@ -408,10 +391,10 @@ Created: ${new Date().toLocaleString()}
       left: 0,
       width: '100%',
       height: 1,
-      content: ' Obsidian CLI - Press Ctrl+C to exit | Type to add content | Use /commands for actions',
+      content: ' Obsidian CLI - Press Tab to navigate | Ctrl+C to exit | Type to add content | Use /commands for actions',
       style: {
-        bg: '#1e1e1e',
-        fg: '#ffffff'
+        fg: 'white',
+        inverse: true
       }
     });
 
@@ -422,15 +405,10 @@ Created: ${new Date().toLocaleString()}
       width: '100%-2',
       height: '22%',
       border: {
-        type: 'line',
-        fg: 'green'
+        type: 'line'
       },
       style: {
-        bg: '#000000',
-        fg: '#ffffff',
-        border: {
-          fg: '#444444'
-        }
+        fg: 'white'
       }
     });
 
@@ -442,7 +420,6 @@ Created: ${new Date().toLocaleString()}
       height: 1,
       content: '>',
       style: {
-        bg: '#000000',
         fg: 'cyan',
         bold: true
       }
@@ -455,8 +432,7 @@ Created: ${new Date().toLocaleString()}
       width: '100%-4',
       height: 1,
       style: {
-        bg: '#000000',
-        fg: '#ffffff'
+        fg: 'white'
       },
       inputOnFocus: true,
       censor: false
@@ -469,7 +445,9 @@ Created: ${new Date().toLocaleString()}
           const lineNum = (index + 1).toString().padStart(3, ' ');
           return `${lineNum} │ ${line}`;
         });
-        notesDisplay.setContent(numberedLines.join('\n'));
+        // Reverse the lines to show from last line first
+        const reversedLines = numberedLines.reverse();
+        notesDisplay.setContent(reversedLines.join('\n'));
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);
       } else {
         notesDisplay.setContent('File is empty');
@@ -477,12 +455,6 @@ Created: ${new Date().toLocaleString()}
       screen.render();
     };
 
-    screen.style = screen.style || {};
-    screen.style.bg = '#000000';
-    screen.style.fg = '#ffffff';
-
-    process.stdout.write('\x1b[27m');
-    process.stdout.write('\x1b[7l');
 
     inputBox.on('submit', async (value) => {
       if (value.trim()) {
@@ -500,21 +472,29 @@ Created: ${new Date().toLocaleString()}
       process.exit(0);
     });
 
+    // Navigation between input box and text display
+    screen.key('tab', () => {
+      if (inputBox.focused) {
+        notesDisplay.focus();
+      } else {
+        inputBox.focus();
+      }
+      screen.render();
+    });
+
     screen.key(['escape', 'q', 'C-c'], () => {
       process.exit(0);
     });
 
     inputBox.on('focus', () => {
-      process.stdout.write('\x1b[0m');
-      inputBox.style.bg = '#000000';
-      inputBox.style.fg = '#ffffff';
+      inputContainer.style.border.fg = 'green';
+      notesDisplay.style.border.fg = 'white';
       screen.render();
     });
 
     notesDisplay.on('focus', () => {
-      process.stdout.write('\x1b[0m');
-      notesDisplay.style.bg = '#000000';
-      notesDisplay.style.fg = '#ffffff';
+      notesDisplay.style.border.fg = 'green';
+      inputContainer.style.border.fg = 'white';
       screen.render();
     });
 
