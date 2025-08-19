@@ -1,0 +1,43 @@
+{
+  "name": "obsidian-cli-manager",
+  "version": "1.0.0",
+  "description": "A CLI tool for managing Obsidian vault with Claude Code-inspired interface",
+  "main": "src/cli.js",
+  "bin": {
+    "obsidian": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "dev": "node src/cli.js",
+    "test": "jest",
+    "lint": "eslint src/**/*.js",
+    "format": "prettier --write src/**/*.js",
+    "link": "npm link",
+    "dev-install": "npm link && echo 'CLI installed globally! Use \"obsidian\" command to test.'",
+    "watch": "node watch-dev.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0",
+    "chalk": "^4.1.2",
+    "inquirer": "^8.2.4",
+    "blessed": "^0.1.81"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0",
+    "prettier": "^3.0.0"
+  },
+  "keywords": [
+    "obsidian",
+    "cli",
+    "notes",
+    "markdown",
+    "daily-notes"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "preferGlobal": true
+}
