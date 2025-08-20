@@ -90,11 +90,18 @@ class ObsidianInterface {
   }
 
   getDailyNotePath() {
-    return path.join(this.vaultPath, `${this.getTodayDate()}.md`);
+    return path.join(this.vaultPath, 'raw notes', `${this.getTodayDate()}.md`);
   }
 
   async ensureDailyNote() {
     const dailyNotePath = this.getDailyNotePath();
+    const rawNotesDir = path.join(this.vaultPath, 'raw notes');
+
+    try {
+      await fs.access(rawNotesDir);
+    } catch (error) {
+      await fs.mkdir(rawNotesDir, { recursive: true });
+    }
 
     try {
       await fs.access(dailyNotePath);
@@ -160,7 +167,8 @@ class ObsidianInterface {
       scrollable: true,
       alwaysScroll: true,
       mouse: true,
-      keys: true
+      keys: true,
+      tags: true
     });
 
     this.inputBox = blessed.textbox({
@@ -246,7 +254,8 @@ class ObsidianInterface {
     const lines = this.currentContent.split('\n');
     const numberedLines = lines.map((line, index) => {
       const lineNum = (index + 1).toString().padStart(3, ' ');
-      return `${lineNum} │ ${line}`;
+      const styledLine = this.styleLineContent(line);
+      return `${lineNum} │ ${styledLine}`;
     });
 
     this.fileBox.setLabel(` ${path.basename(this.currentFile)} `);
@@ -254,6 +263,30 @@ class ObsidianInterface {
 
     this.fileBox.scrollTo(this.fileBox.getScrollHeight());
     this.screen.render();
+  }
+
+  styleLineContent(line) {
+    if (line.match(/^##\s+/)) {
+      return `{cyan-fg}{bold}${line}{/bold}{/cyan-fg}`;
+    }
+    
+    if (line.match(/^#\s+/)) {
+      return `{magenta-fg}{bold}${line}{/bold}{/magenta-fg}`;
+    }
+    
+    if (line.match(/^\s*-\s+\[[ x]\]\s+/)) {
+      return `{green-fg}${line}{/green-fg}`;
+    }
+    
+    if (line.match(/^\s*-\s+/)) {
+      return `{yellow-fg}${line}{/yellow-fg}`;
+    }
+    
+    if (line.match(/^#\w+/)) {
+      return `{blue-fg}${line}{/blue-fg}`;
+    }
+    
+    return line;
   }
 
   async processInput(input) {

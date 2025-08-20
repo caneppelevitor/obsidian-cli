@@ -97,12 +97,19 @@ class ObsidianCLI {
   }
 
   getDailyNotePath() {
-    return path.join(this.vaultPath, this.getDailyNoteFilename());
+    return path.join(this.vaultPath, 'raw notes', this.getDailyNoteFilename());
   }
 
   async openDailyNote() {
     const dailyNotePath = this.getDailyNotePath();
     const dailyNoteFilename = this.getDailyNoteFilename();
+    const rawNotesDir = path.join(this.vaultPath, 'raw notes');
+
+    try {
+      await fs.access(rawNotesDir);
+    } catch (error) {
+      await fs.mkdir(rawNotesDir, { recursive: true });
+    }
 
     try {
       await fs.access(dailyNotePath);
@@ -473,7 +480,7 @@ class ObsidianCLI {
       top: 1,
       left: 1,
       width: '100%-2',
-      height: '70%',
+      height: '80%',
       border: {
         type: 'line'
       },
@@ -488,6 +495,7 @@ class ObsidianCLI {
       clickable: true,
       keyable: true,
       keys: true,
+      tags: true,
       label: {
         text: ` ${path.basename(this.currentFile || 'No file')} `,
         side: 'left',
@@ -513,15 +521,15 @@ class ObsidianCLI {
 
     const inputContainer = blessed.box({
       parent: screen,
-      top: '75%',
+      top: '85%',
       left: 1,
       width: '100%-2',
-      height: '22%',
+      height: '12%',
       border: {
         type: 'line'
       },
       style: {
-        fg: 'white'
+        fg: 'cyan'
       }
     });
 
@@ -545,7 +553,7 @@ class ObsidianCLI {
       width: '100%-4',
       height: 1,
       style: {
-        fg: 'white'
+        fg: 'cyan'
       },
       inputOnFocus: true,
       censor: false
@@ -561,12 +569,37 @@ class ObsidianCLI {
       }
     };
 
+    const styleLineContent = (line) => {
+      if (line.match(/^##\s+/)) {
+        return `{cyan-fg}{bold}${line}{/bold}{/cyan-fg}`;
+      }
+      
+      if (line.match(/^#\s+/)) {
+        return `{magenta-fg}{bold}${line}{/bold}{/magenta-fg}`;
+      }
+      
+      if (line.match(/^\s*-\s+\[[ x]\]\s+/)) {
+        return `{green-fg}${line}{/green-fg}`;
+      }
+      
+      if (line.match(/^\s*-\s+/)) {
+        return `{yellow-fg}${line}{/yellow-fg}`;
+      }
+      
+      if (line.match(/^#\w+/)) {
+        return `{blue-fg}${line}{/blue-fg}`;
+      }
+      
+      return line;
+    };
+
     const updateNotesDisplay = () => {
       if (this.currentContent) {
         const lines = this.currentContent.split('\n');
         const numberedLines = lines.map((line, index) => {
           const lineNum = (index + 1).toString().padStart(3, ' ');
-          return `${lineNum} │ ${line}`;
+          const styledLine = styleLineContent(line);
+          return `${lineNum} │ ${styledLine}`;
         });
         notesDisplay.setContent(numberedLines.join('\n'));
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);

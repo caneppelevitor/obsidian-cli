@@ -90,7 +90,7 @@ program
   .command('init')
   .description('Initialize configuration with your vault path')
   .action(async () => {
-    const vaultPath = '/Users/vitorcaneppele/Documents/Notes do Papai/zettelkasten vault';
+    const vaultPath = '/Users/vitorcaneppele/Documents/Notes do Papai/zettelkasten vault/raw notes';
     await config.setVaultPath(vaultPath);
     console.log(chalk.green(`Initialized with vault: ${vaultPath}`));
     console.log(chalk.blue('You can now use commands without specifying --vault option'));
