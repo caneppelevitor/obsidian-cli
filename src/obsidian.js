@@ -19,6 +19,76 @@ class ObsidianInterface {
     return new Date().toISOString().split('T')[0];
   }
 
+  processTemplate(template) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    
+    return template.replace(/\{\{date:YYYY-MM-DD\}\}/g, `${year}-${month}-${day}`);
+  }
+
+  async processContentInput(input) {
+    const trimmed = input.trim();
+    
+    if (trimmed.startsWith('[]')) {
+      const content = trimmed.slice(2).trim();
+      await this.addToSection('Tasks', `- [ ] ${content}`);
+    } else if (trimmed.startsWith('-')) {
+      const content = trimmed.slice(1).trim();
+      await this.addToSection('Ideas', `- ${content}`);
+    } else if (trimmed.startsWith('?')) {
+      const content = trimmed.slice(1).trim();
+      await this.addToSection('Questions', `- ${content}`);
+    } else if (trimmed.startsWith('!')) {
+      const content = trimmed.slice(1).trim();
+      await this.addToSection('Insights', `- ${content}`);
+    } else {
+      await this.addContent(trimmed);
+    }
+  }
+
+  async addToSection(sectionName, content) {
+    const lines = this.currentContent.split('\n');
+    const sectionIndex = this.findSectionIndex(lines, sectionName);
+    
+    if (sectionIndex === -1) {
+      await this.addContent(content);
+      return;
+    }
+    
+    let insertIndex = sectionIndex + 1;
+    let lastContentLine = sectionIndex;
+    let hasContent = false;
+    
+    while (insertIndex < lines.length && !lines[insertIndex].startsWith('## ')) {
+      if (lines[insertIndex].trim() !== '') {
+        lastContentLine = insertIndex;
+        hasContent = true;
+      }
+      insertIndex++;
+    }
+    
+    if (!hasContent) {
+      lines.splice(sectionIndex + 1, 0, content);
+    } else {
+      lines.splice(lastContentLine + 1, 0, content);
+    }
+    
+    this.currentContent = lines.join('\n');
+    await this.saveFileContent();
+    this.updateFileDisplay();
+  }
+
+  findSectionIndex(lines, sectionName) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('## ') && lines[i].includes(sectionName)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   getDailyNotePath() {
     return path.join(this.vaultPath, `${this.getTodayDate()}.md`);
   }
@@ -29,10 +99,23 @@ class ObsidianInterface {
     try {
       await fs.access(dailyNotePath);
     } catch (error) {
-      const template = `# ${this.getTodayDate()}
+      const template = `# {{date:YYYY-MM-DD}}
 
+##  Insights
+
+## Tasks
+
+## Ideas
+
+## Questions
+
+## Links to Expand
+
+## Tags
+#daily #inbox
 `;
-      await fs.writeFile(dailyNotePath, template);
+      const processedTemplate = this.processTemplate(template);
+      await fs.writeFile(dailyNotePath, processedTemplate);
     }
 
     this.currentFile = dailyNotePath;
@@ -150,19 +233,12 @@ class ObsidianInterface {
 
   resetInput() {
     this.inputBox.clearValue();
-    this.inputBox.setValue('> [] ');
+    this.inputBox.setValue('> ');
     this.inputBox.focus();
     this.screen.render();
   }
 
   extractContent(text) {
-    const match = text.match(/^>\s*\[(.*?)\]\s*(.*)$/);
-    if (match) {
-      const lineTarget = match[1].trim();
-      const content = match[2].trim();
-      return lineTarget ? `[${lineTarget}] ${content}` : content;
-    }
-
     return text.replace(/^>\s*/, '');
   }
 
@@ -188,7 +264,8 @@ class ObsidianInterface {
     }
 
     if (trimmed === '/clear') {
-      this.currentContent = `# ${this.getTodayDate()}\n\n`;
+      const template = `# {{date:YYYY-MM-DD}}\n\n##  Insights\n\n## Tasks\n\n## Ideas\n\n## Questions\n\n## Links to Expand\n\n## Tags\n#daily #inbox\n`;
+      this.currentContent = this.processTemplate(template);
       await this.saveFileContent();
       this.updateFileDisplay();
       return;
@@ -205,30 +282,9 @@ class ObsidianInterface {
       return;
     }
 
-    if (trimmed.startsWith('[') && trimmed.includes(']')) {
-      const bracketEnd = trimmed.indexOf(']');
-      const lineTarget = trimmed.slice(1, bracketEnd);
-      const content = trimmed.slice(bracketEnd + 1).trim();
-
-      if (lineTarget.startsWith('n')) {
-        const afterLine = parseInt(lineTarget.slice(1));
-        if (!isNaN(afterLine)) {
-          await this.insertNewLine(content, afterLine);
-          return;
-        }
-      } else {
-        const targetLineNum = parseInt(lineTarget);
-        if (!isNaN(targetLineNum)) {
-          await this.addContent(content, targetLineNum);
-          return;
-        }
-      }
-    }
 
     if (trimmed !== '') {
-      await this.addContent(trimmed);
-    } else {
-      await this.addContent('');
+      await this.processContentInput(trimmed);
     }
   }
 

@@ -15,6 +15,83 @@ class ObsidianCLI {
     return new Date().toISOString().split('T')[0];
   }
 
+  processTemplate(template) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    
+    return template.replace(/\{\{date:YYYY-MM-DD\}\}/g, `${year}-${month}-${day}`);
+  }
+
+  async processContentInput(input) {
+    const trimmed = input.trim();
+    
+    if (trimmed.startsWith('[]')) {
+      const content = trimmed.slice(2).trim();
+      await this.addToSection('Tasks', `- [ ] ${content}`);
+      return true;
+    } else if (trimmed.startsWith('-')) {
+      const content = trimmed.slice(1).trim();
+      await this.addToSection('Ideas', `- ${content}`);
+      return true;
+    } else if (trimmed.startsWith('?')) {
+      const content = trimmed.slice(1).trim();
+      await this.addToSection('Questions', `- ${content}`);
+      return true;
+    } else if (trimmed.startsWith('!')) {
+      const content = trimmed.slice(1).trim();
+      await this.addToSection('Insights', `- ${content}`);
+      return true;
+    } else {
+      return await this.addContent(trimmed);
+    }
+  }
+
+  async addToSection(sectionName, content) {
+    if (!this.currentFile) {
+      return false;
+    }
+
+    const lines = this.currentContent.split('\n');
+    const sectionIndex = this.findSectionIndex(lines, sectionName);
+    
+    if (sectionIndex === -1) {
+      return await this.addContent(content);
+    }
+    
+    let insertIndex = sectionIndex + 1;
+    let lastContentLine = sectionIndex;
+    let hasContent = false;
+    
+    while (insertIndex < lines.length && !lines[insertIndex].startsWith('## ')) {
+      if (lines[insertIndex].trim() !== '') {
+        lastContentLine = insertIndex;
+        hasContent = true;
+      }
+      insertIndex++;
+    }
+    
+    if (!hasContent) {
+      lines.splice(sectionIndex + 1, 0, content);
+    } else {
+      lines.splice(lastContentLine + 1, 0, content);
+    }
+    
+    this.currentContent = lines.join('\n');
+    await this.saveCurrentFileContent();
+    return true;
+  }
+
+  findSectionIndex(lines, sectionName) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('## ') && lines[i].includes(sectionName)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
   getDailyNoteFilename() {
     return `${this.getTodayDate()}.md`;
   }
@@ -31,22 +108,24 @@ class ObsidianCLI {
       await fs.access(dailyNotePath);
       console.log(chalk.blue(`Opening existing daily note: ${dailyNoteFilename}`));
     } catch (error) {
-      const template = `# Daily Note - ${this.getTodayDate()}
+      const template = `# {{date:YYYY-MM-DD}}
+
+##  Insights
 
 ## Tasks
-- [ ]
 
-## Notes
+## Ideas
 
+## Questions
 
-## Reflections
+## Links to Expand
 
-
----
-Created: ${new Date().toLocaleString()}
+## Tags
+#daily #inbox
 `;
+      const processedTemplate = this.processTemplate(template);
 
-      await fs.writeFile(dailyNotePath, template);
+      await fs.writeFile(dailyNotePath, processedTemplate);
       console.log(chalk.green(`Created new daily note: ${dailyNoteFilename}`));
     }
 
@@ -373,42 +452,7 @@ Created: ${new Date().toLocaleString()}
           return false;
       }
     } else {
-      const normalTextMatch = input.match(/^\[\]\s+(.+)$/);
-      if (normalTextMatch) {
-        const content = normalTextMatch[1].trim();
-        if (content) {
-          const contentWithPrefix = `- ${content}`;
-          return await this.addContent(contentWithPrefix);
-        }
-        return false;
-      }
-      
-      const newLineMatch = input.match(/^\[n(\d+)\]\s*(.*)$/);
-      if (newLineMatch) {
-        const lineNumber = parseInt(newLineMatch[1]);
-        const content = newLineMatch[2].trim();
-        
-        if (content) {
-          const contentWithPrefix = `- ${content}`;
-          return await this.insertContentAtLine(contentWithPrefix, lineNumber);
-        }
-        return false;
-      }
-      
-      const replaceLineMatch = input.match(/^\[(\d+)\]\s*(.*)$/);
-      if (replaceLineMatch) {
-        const lineNumber = parseInt(replaceLineMatch[1]);
-        const content = replaceLineMatch[2].trim();
-        
-        if (content) {
-          const contentWithPrefix = `- ${content}`;
-          return await this.replaceContentAtLine(contentWithPrefix, lineNumber);
-        }
-        return false;
-      }
-      
-      const contentWithPrefix = `- ${input}`;
-      return await this.addContent(contentWithPrefix);
+      return await this.processContentInput(input);
     }
   }
 
@@ -509,7 +553,7 @@ Created: ${new Date().toLocaleString()}
 
     const setPlaceholder = () => {
       if (!inputBox.value || inputBox.value.trim() === '') {
-        inputBox.setValue('[]');
+        inputBox.setValue('');
         setTimeout(() => {
           inputBox.screen.program.cup(inputBox.atop + inputBox.itop + 1, inputBox.aleft + inputBox.ileft + 1);
           screen.render();
@@ -536,23 +580,7 @@ Created: ${new Date().toLocaleString()}
 
     inputBox.on('submit', async (value) => {
       const shouldIgnoreInput = (input) => {
-        if (!input || !input.trim()) return true;
-        
-        const exactIgnorePatterns = ['[]', '[ ]', '[  ]', '[ '];
-        
-        if (exactIgnorePatterns.includes(input) || exactIgnorePatterns.includes(input.trim())) {
-          return true;
-        }
-        
-        if (/^\[\s+[^\d].*\]$/.test(input) || /^\[\s*\]$/.test(input)) {
-          return true;
-        }
-        
-        if (/^\s/.test(input) && !/^\[\]\s/.test(input)) {
-          return true;
-        }
-        
-        return false;
+        return !input || !input.trim();
       };
       
       if (!shouldIgnoreInput(value)) {
