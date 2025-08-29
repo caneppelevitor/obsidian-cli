@@ -42,7 +42,25 @@ class Config {
     }
 
     config.defaultVault = vaultPath;
+    if (!config.taskLogFile) {
+      config.taskLogFile = 'tasks-log.md';
+    }
     await this.saveConfig(config);
+  }
+
+  async setTaskLogFile(taskLogFile) {
+    const config = await this.loadConfig();
+    config.taskLogFile = taskLogFile;
+    await this.saveConfig(config);
+  }
+
+  async getTaskLogFile() {
+    try {
+      const config = await this.loadConfig();
+      return config.taskLogFile || 'tasks-log.md';
+    } catch (error) {
+      return 'tasks-log.md';
+    }
   }
 
   async getVaultPath() {
@@ -60,6 +78,8 @@ const config = new Config();
 module.exports = {
   setVaultPath: (vaultPath) => config.setVaultPath(vaultPath),
   getVaultPath: () => config.getVaultPath(),
+  setTaskLogFile: (taskLogFile) => config.setTaskLogFile(taskLogFile),
+  getTaskLogFile: () => config.getTaskLogFile(),
   loadConfig: () => config.loadConfig(),
   saveConfig: (configData) => config.saveConfig(configData)
 };

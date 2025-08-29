@@ -3,6 +3,7 @@ const path = require('path');
 const readline = require('readline');
 const chalk = require('chalk');
 const blessed = require('blessed');
+const config = require('./config');
 
 class ObsidianCLI {
   constructor(vaultPath) {
@@ -13,6 +14,50 @@ class ObsidianCLI {
 
   getTodayDate() {
     return new Date().toISOString().split('T')[0];
+  }
+
+  async getTaskLogPath() {
+    const taskLogFile = await config.getTaskLogFile();
+    return path.join(this.vaultPath, taskLogFile);
+  }
+
+  async logTaskToCentralFile(taskContent) {
+    const taskLogPath = await this.getTaskLogPath();
+    const sourceFile = this.currentFile ? path.basename(this.currentFile, '.md') : 'unknown';
+    
+    const logEntry = `- [ ] ${taskContent} *[[${sourceFile}]]*`;
+    
+    try {
+      let existingContent = '';
+      try {
+        existingContent = await fs.readFile(taskLogPath, 'utf-8');
+      } catch (error) {
+        const header = `# Task Log\n\nCentralized log of all tasks created across daily notes.\n\n`;
+        existingContent = header;
+      }
+      
+      const lines = existingContent.split('\n');
+      
+      let insertIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('- [ ]') || lines[i].trim().startsWith('- [x]')) {
+          insertIndex = i;
+          break;
+        }
+      }
+      
+      if (insertIndex === -1) {
+        lines.push('', logEntry);
+      } else {
+        lines.splice(insertIndex, 0, logEntry);
+      }
+      
+      const updatedContent = lines.join('\n');
+      await fs.writeFile(taskLogPath, updatedContent);
+      
+    } catch (error) {
+      console.error('Error logging task to central file:', error.message);
+    }
   }
 
   processTemplate(template) {
@@ -30,6 +75,7 @@ class ObsidianCLI {
     if (trimmed.startsWith('[]')) {
       const content = trimmed.slice(2).trim();
       await this.addToSection('Tasks', `- [ ] ${content}`);
+      await this.logTaskToCentralFile(content);
       return true;
     } else if (trimmed.startsWith('-')) {
       const content = trimmed.slice(1).trim();
@@ -150,14 +196,13 @@ class ObsidianCLI {
   async saveCurrentFileContent() {
     if (this.currentFile) {
       const lines = this.currentContent.split('\n');
-      const hasMetadata = lines.some(line => line.includes('updated_at:') || line.includes('edited_seconds:'));
+      const hasMetadata = lines.some(line => line.includes('updated_at:'));
 
       if (!hasMetadata && lines.length > 0) {
         const now = new Date();
         const metadata = [
           '---',
           `updated_at: ${now.toISOString()}`,
-          `edited_seconds: ${Math.floor(Date.now() / 1000)}`,
           '---'
         ];
 
@@ -169,9 +214,6 @@ class ObsidianCLI {
         const updatedLines = lines.map(line => {
           if (line.includes('updated_at:')) {
             return `updated_at: ${new Date().toISOString()}`;
-          }
-          if (line.includes('edited_seconds:')) {
-            return `edited_seconds: ${Math.floor(Date.now() / 1000)}`;
           }
           return line;
         });
