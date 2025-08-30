@@ -143,18 +143,17 @@ class ObsidianCLI {
   }
 
   getDailyNotePath() {
-    return path.join(this.vaultPath, 'raw notes', this.getDailyNoteFilename());
+    return path.join(this.vaultPath, this.getDailyNoteFilename());
   }
 
   async openDailyNote() {
     const dailyNotePath = this.getDailyNotePath();
     const dailyNoteFilename = this.getDailyNoteFilename();
-    const rawNotesDir = path.join(this.vaultPath, 'raw notes');
 
     try {
-      await fs.access(rawNotesDir);
+      await fs.access(this.vaultPath);
     } catch (error) {
-      await fs.mkdir(rawNotesDir, { recursive: true });
+      await fs.mkdir(this.vaultPath, { recursive: true });
     }
 
     try {

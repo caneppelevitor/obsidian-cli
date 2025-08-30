@@ -90,17 +90,16 @@ class ObsidianInterface {
   }
 
   getDailyNotePath() {
-    return path.join(this.vaultPath, 'raw notes', `${this.getTodayDate()}.md`);
+    return path.join(this.vaultPath, `${this.getTodayDate()}.md`);
   }
 
   async ensureDailyNote() {
     const dailyNotePath = this.getDailyNotePath();
-    const rawNotesDir = path.join(this.vaultPath, 'raw notes');
 
     try {
-      await fs.access(rawNotesDir);
+      await fs.access(this.vaultPath);
     } catch (error) {
-      await fs.mkdir(rawNotesDir, { recursive: true });
+      await fs.mkdir(this.vaultPath, { recursive: true });
     }
 
     try {
