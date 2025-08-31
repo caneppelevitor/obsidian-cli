@@ -10,6 +10,7 @@ class ObsidianCLI {
     this.vaultPath = vaultPath;
     this.currentFile = null;
     this.currentContent = '';
+    this.lastInsertedLine = null;
   }
 
   getTodayDate() {
@@ -118,14 +119,20 @@ class ObsidianCLI {
       insertIndex++;
     }
     
+    let actualInsertLine;
     if (!hasContent) {
       lines.splice(sectionIndex + 1, 0, content);
+      actualInsertLine = sectionIndex + 1;
     } else {
       lines.splice(lastContentLine + 1, 0, content);
+      actualInsertLine = lastContentLine + 1;
     }
     
     this.currentContent = lines.join('\n');
     await this.saveCurrentFileContent();
+    
+    this.lastInsertedLine = actualInsertLine + 1;
+    
     return true;
   }
 
@@ -315,17 +322,25 @@ class ObsidianCLI {
       return false;
     }
 
+    const lines = this.currentContent.split('\n');
+    let insertLine;
+    
     switch (insertionMode) {
       case 'append':
         this.currentContent += '\n' + content;
+        insertLine = lines.length + 1;
         break;
       case 'prepend':
         this.currentContent = content + '\n' + this.currentContent;
+        insertLine = 1;
         break;
       case 'replace':
         this.currentContent = content;
+        insertLine = 1;
         break;
     }
+
+    this.lastInsertedLine = insertLine;
 
     await this.saveCurrentFileContent();
     return true;
@@ -341,6 +356,9 @@ class ObsidianCLI {
     if (lineNumber >= 0 && lineNumber <= lines.length) {
       lines.splice(lineNumber, 0, content);
       this.currentContent = lines.join('\n');
+      
+      this.lastInsertedLine = lineNumber + 1;
+      
       await this.saveCurrentFileContent();
       return true;
     }
@@ -644,7 +662,25 @@ class ObsidianCLI {
         });
         notesDisplay.setContent(numberedLines.join('\n'));
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);
-        notesDisplay.setScrollPerc(100);
+        
+        if (this.lastInsertedLine) {
+          const totalLines = lines.length;
+          const displayHeight = notesDisplay.height - 2;
+          
+          const currentScrollTop = notesDisplay.getScroll();
+          const currentScrollBottom = currentScrollTop + displayHeight;
+          
+          const insertedLineIndex = this.lastInsertedLine - 1;
+          
+          if (insertedLineIndex < currentScrollTop || insertedLineIndex >= currentScrollBottom) {
+            const targetScrollTop = Math.max(0, insertedLineIndex - Math.floor(displayHeight / 2));
+            notesDisplay.scrollTo(targetScrollTop);
+          }
+          
+          this.lastInsertedLine = null;
+        } else {
+          notesDisplay.scrollTo(notesDisplay.getScrollHeight());
+        }
       } else {
         notesDisplay.setContent('File is empty');
       }
