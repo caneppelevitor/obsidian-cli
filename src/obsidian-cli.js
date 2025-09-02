@@ -605,7 +605,7 @@ class ObsidianCLI {
       }
     });
 
-    const inputBox = blessed.textbox({
+    const inputBox = blessed.box({
       parent: inputContainer,
       top: 1,
       left: 3,
@@ -614,18 +614,74 @@ class ObsidianCLI {
       style: {
         fg: 'cyan'
       },
-      inputOnFocus: true,
-      censor: false
+      tags: true,
+      focusable: true,
+      keyable: true,
+      input: false
     });
 
-    const setPlaceholder = () => {
-      if (!inputBox.value || inputBox.value.trim() === '') {
-        inputBox.setValue('');
-        setTimeout(() => {
-          inputBox.screen.program.cup(inputBox.atop + inputBox.itop + 1, inputBox.aleft + inputBox.ileft + 1);
-          screen.render();
-        }, 10);
+    let inputBuffer = '';
+    let cursorPos = 0;
+
+    const renderInput = () => {
+      const beforeCursor = inputBuffer.slice(0, cursorPos);
+      const atCursor = inputBuffer.slice(cursorPos, cursorPos + 1) || ' ';
+      const afterCursor = inputBuffer.slice(cursorPos + 1);
+      
+      const inputDisplay = beforeCursor + `{inverse}${atCursor}{/inverse}` + afterCursor;
+      inputBox.setContent(inputDisplay);
+      screen.render();
+    };
+
+    const clearInput = () => {
+      inputBuffer = '';
+      cursorPos = 0;
+      renderInput();
+    };
+
+    const insertChar = (char) => {
+      inputBuffer = inputBuffer.slice(0, cursorPos) + char + inputBuffer.slice(cursorPos);
+      cursorPos++;
+      renderInput();
+    };
+
+    const deleteChar = () => {
+      if (cursorPos > 0) {
+        inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
+        cursorPos--;
+        renderInput();
       }
+    };
+
+    const deleteCharForward = () => {
+      if (cursorPos < inputBuffer.length) {
+        inputBuffer = inputBuffer.slice(0, cursorPos) + inputBuffer.slice(cursorPos + 1);
+        renderInput();
+      }
+    };
+
+    const moveCursorLeft = () => {
+      if (cursorPos > 0) {
+        cursorPos--;
+        renderInput();
+      }
+    };
+
+    const moveCursorRight = () => {
+      if (cursorPos < inputBuffer.length) {
+        cursorPos++;
+        renderInput();
+      }
+    };
+
+    const moveCursorHome = () => {
+      cursorPos = 0;
+      renderInput();
+    };
+
+    const moveCursorEnd = () => {
+      cursorPos = inputBuffer.length;
+      renderInput();
     };
 
     const styleLineContent = (line) => {
@@ -688,69 +744,68 @@ class ObsidianCLI {
     };
 
 
-    inputBox.on('submit', async (value) => {
-      const shouldIgnoreInput = (input) => {
-        return !input || !input.trim();
-      };
+    let lastProcessedTime = 0;
+    screen.on('keypress', async (ch, key) => {
+      if (!inputBox.focused) return;
       
-      if (!shouldIgnoreInput(value)) {
-        const success = await this.processInput(value);
-        if (success !== false) {
-          updateNotesDisplay();
+      const now = Date.now();
+      if (now - lastProcessedTime < 50) {
+        return;
+      }
+      lastProcessedTime = now;
+
+      if (key && key.name) {
+        switch (key.name) {
+          case 'return':
+          case 'enter':
+            if (inputBuffer.trim()) {
+              const success = await this.processInput(inputBuffer);
+              if (success !== false) {
+                updateNotesDisplay();
+              }
+            }
+            clearInput();
+            return;
+
+          case 'backspace':
+            deleteChar();
+            return;
+
+          case 'delete':
+            deleteCharForward();
+            return;
+
+          case 'left':
+            moveCursorLeft();
+            return;
+
+          case 'right':
+            moveCursorRight();
+            return;
+
+          case 'home':
+            moveCursorHome();
+            return;
+
+          case 'end':
+            moveCursorEnd();
+            return;
+
+          case 'escape':
+            clearInput();
+            return;
+
+          case 'tab':
+            return;
         }
       }
-      
-      inputBox.clearValue();
-      setPlaceholder();
-      inputBox.focus();
-      screen.render();
-    });
 
-    inputBox.key('C-c', () => {
-      process.exit(0);
-    });
-
-    inputBox.key(['left'], () => {
-      const currentValue = inputBox.value || '';
-      const cursorPos = inputBox.screen.program.x - inputBox.aleft - inputBox.ileft;
-      
-      if (cursorPos > 0) {
-        inputBox.screen.program.cup(
-          inputBox.atop + inputBox.itop + 1, 
-          inputBox.aleft + inputBox.ileft + cursorPos - 1
-        );
+      if (ch && typeof ch === 'string' && ch.length === 1) {
+        const charCode = ch.charCodeAt(0);
+        if (charCode >= 32 && charCode <= 126) {
+          insertChar(ch);
+        }
       }
-      screen.render();
-    });
-
-    inputBox.key(['right'], () => {
-      const currentValue = inputBox.value || '';
-      const cursorPos = inputBox.screen.program.x - inputBox.aleft - inputBox.ileft;
-      
-      if (cursorPos < currentValue.length) {
-        inputBox.screen.program.cup(
-          inputBox.atop + inputBox.itop + 1, 
-          inputBox.aleft + inputBox.ileft + cursorPos + 1
-        );
-      }
-      screen.render();
-    });
-
-    inputBox.key(['home'], () => {
-      inputBox.screen.program.cup(
-        inputBox.atop + inputBox.itop + 1, 
-        inputBox.aleft + inputBox.ileft
-      );
-      screen.render();
-    });
-
-    inputBox.key(['end'], () => {
-      const currentValue = inputBox.value || '';
-      inputBox.screen.program.cup(
-        inputBox.atop + inputBox.itop + 1, 
-        inputBox.aleft + inputBox.ileft + currentValue.length
-      );
-      screen.render();
     });
 
 
@@ -763,15 +818,20 @@ class ObsidianCLI {
       screen.render();
     });
 
-    screen.key(['escape', 'q', 'C-c'], () => {
+    screen.key(['escape', 'C-c'], () => {
       process.exit(0);
+    });
+
+    screen.key('q', () => {
+      if (!inputBox.focused) {
+        process.exit(0);
+      }
     });
 
     inputBox.on('focus', () => {
       inputContainer.style.border.fg = 'green';
       notesDisplay.style.border.fg = 'white';
-      setPlaceholder();
-      screen.render();
+      renderInput();
     });
 
     notesDisplay.on('focus', () => {
@@ -786,7 +846,7 @@ class ObsidianCLI {
     });
 
     inputBox.focus();
-    setPlaceholder();
+    renderInput();
 
     updateNotesDisplay();
     screen.render();
