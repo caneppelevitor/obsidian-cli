@@ -2,6 +2,9 @@
 
 A simple CLI tool for managing daily notes in your Obsidian vault, designed around my personal note-taking workflow with section-based organization.
 
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/91509a6b-9116-48d9-94ed-cdbc8189b285" />
+
+
 ## Installation
 
 ```bash
@@ -24,7 +27,7 @@ npm start daily
 ## How It Works
 
 This tool is built around my daily note-taking flow with predefined sections. Notes are organized with markdown headers (## Section Name) and content is automatically placed in the right section based on simple prefix commands.
-
+¡
 ### Section Commands
 
 Use these prefixes to add content to specific sections:
