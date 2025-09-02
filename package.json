@@ -17,14 +17,15 @@
     "watch": "node watch-dev.js"
   },
   "dependencies": {
-    "commander": "^11.0.0",
+    "blessed": "^0.1.81",
     "chalk": "^4.1.2",
+    "commander": "^11.0.0",
     "inquirer": "^8.2.4",
-    "blessed": "^0.1.81"
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
-    "jest": "^29.0.0",
     "eslint": "^8.0.0",
+    "jest": "^29.0.0",
     "prettier": "^3.0.0"
   },
   "keywords": [

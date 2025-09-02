@@ -1,0 +1,88 @@
+# Obsidian CLI Configuration
+# This file contains all configuration options for the Obsidian CLI tool
+# Copy this file to your home directory as ~/.obsidian-cli/config.yaml and modify as needed
+
+# Default vault configuration
+vault:
+  # Path to your Obsidian vault directory (required)
+  # Example: /Users/username/Documents/MyVault
+  defaultPath: ""
+  
+# Task logging configuration
+tasks:
+  # Name of the central task log file (default: tasks-log.md)
+  logFile: "tasks-log.md"
+  
+  # Whether to automatically log all tasks to the central file (default: true)
+  autoLog: true
+  
+  # Format for task timestamps in the log file
+  # Options: "iso" (2024-01-01T10:30:00Z), "simple" (2024-01-01 10:30), "none"
+  timestampFormat: "simple"
+
+# Daily note configuration  
+dailyNotes:
+  # Template sections to include in new daily notes
+  sections:
+    - "Daily Log"
+    - "Tasks"
+    - "Ideas" 
+    - "Questions"
+    - "Insights"
+    - "Links to Expand"
+  
+  # Default tags to add to daily notes
+  tags:
+    - "#daily"
+    - "#inbox"
+    
+  # Date format for daily note titles (using moment.js format)
+  # Default: "YYYY-MM-DD" (e.g., 2024-01-01)
+  titleFormat: "YYYY-MM-DD"
+  
+# Interface configuration
+interface:
+  # Terminal interface theme
+  theme:
+    # Colors for different UI elements (blessed color names or hex codes)
+    border: "cyan"
+    title: "white"
+    content: "white"
+    input: "yellow"
+    highlight: "green"
+    
+  # Scrolling behavior
+  autoScroll: true
+  
+  # Show line numbers in content view
+  showLineNumbers: true
+
+# File organization
+organization:
+  # Section prefixes and their corresponding formatting
+  sectionPrefixes:
+    "[]": "Tasks"      # Tasks as checkboxes
+    "-": "Ideas"       # Ideas as bullet points  
+    "?": "Questions"   # Questions as bullet points
+    "!": "Insights"    # Insights as bullet points
+
+# Advanced settings
+advanced:
+  # Backup configuration
+  backup:
+    # Whether to create backups before modifying files
+    enabled: false
+    
+    # Directory for backups (relative to vault or absolute path)
+    directory: ".obsidian-cli-backups"
+    
+    # Maximum number of backups to keep per file
+    maxBackups: 5
+    
+  # Performance settings
+  performance:
+    # Maximum file size to load in the interface (in MB)
+    maxFileSize: 10
+    
+    # Enable file watching for real-time updates
+    watchFiles: false

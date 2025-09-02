@@ -1,9 +1,10 @@
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
+const yaml = require('js-yaml');
 
 const CONFIG_DIR = path.join(os.homedir(), '.obsidian-cli');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.yaml');
 
 class Config {
   async ensureConfigDir() {
@@ -17,16 +18,76 @@ class Config {
   async loadConfig() {
     try {
       await this.ensureConfigDir();
-      const configData = await fs.readFile(CONFIG_FILE, 'utf-8');
-      return JSON.parse(configData);
+      const yamlData = await fs.readFile(CONFIG_FILE, 'utf-8');
+      return yaml.load(yamlData) || {};
     } catch (error) {
-      return {};
+      return this.getDefaultConfig();
     }
+  }
+
+  getDefaultConfig() {
+    return {
+      vault: {
+        defaultPath: ""
+      },
+      tasks: {
+        logFile: "tasks-log.md",
+        autoLog: true,
+        timestampFormat: "simple"
+      },
+      dailyNotes: {
+        sections: [
+          "Daily Log",
+          "Tasks", 
+          "Ideas",
+          "Questions",
+          "Insights",
+          "Links to Expand"
+        ],
+        tags: ["#daily", "#inbox"],
+        titleFormat: "YYYY-MM-DD"
+      },
+      interface: {
+        theme: {
+          border: "cyan",
+          title: "white", 
+          content: "white",
+          input: "yellow",
+          highlight: "green"
+        },
+        autoScroll: true,
+        showLineNumbers: true
+      },
+      organization: {
+        sectionPrefixes: {
+          "[]": "Tasks",
+          "-": "Ideas",
+          "?": "Questions", 
+          "!": "Insights"
+        }
+      },
+      advanced: {
+        backup: {
+          enabled: false,
+          directory: ".obsidian-cli-backups",
+          maxBackups: 5
+        },
+        performance: {
+          maxFileSize: 10,
+          watchFiles: false
+        }
+      }
+    };
   }
 
   async saveConfig(config) {
     await this.ensureConfigDir();
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2));
+    const yamlContent = yaml.dump(config, {
+      indent: 2,
+      lineWidth: 120,
+      noRefs: true
+    });
+    await fs.writeFile(CONFIG_FILE, yamlContent);
   }
 
   async setVaultPath(vaultPath) {
@@ -41,23 +102,43 @@ class Config {
       throw new Error(`Vault path does not exist or is not accessible: ${vaultPath}`);
     }
 
-    config.defaultVault = vaultPath;
-    if (!config.taskLogFile) {
-      config.taskLogFile = 'tasks-log.md';
+    // Ensure vault object exists
+    if (!config.vault) {
+      config.vault = {};
     }
+    
+    config.vault.defaultPath = vaultPath;
+    
+    // Ensure tasks object exists with defaults
+    if (!config.tasks) {
+      config.tasks = {
+        logFile: 'tasks-log.md',
+        autoLog: true,
+        timestampFormat: 'simple'
+      };
+    } else if (!config.tasks.logFile) {
+      config.tasks.logFile = 'tasks-log.md';
+    }
+    
     await this.saveConfig(config);
   }
 
   async setTaskLogFile(taskLogFile) {
     const config = await this.loadConfig();
-    config.taskLogFile = taskLogFile;
+    
+    // Ensure tasks object exists
+    if (!config.tasks) {
+      config.tasks = {};
+    }
+    
+    config.tasks.logFile = taskLogFile;
     await this.saveConfig(config);
   }
 
   async getTaskLogFile() {
     try {
       const config = await this.loadConfig();
-      return config.taskLogFile || 'tasks-log.md';
+      return config.tasks?.logFile || 'tasks-log.md';
     } catch (error) {
       return 'tasks-log.md';
     }
@@ -66,20 +147,40 @@ class Config {
   async getVaultPath() {
     try {
       const config = await this.loadConfig();
-      return config.defaultVault;
+      return config.vault?.defaultPath;
     } catch (error) {
       return null;
     }
+  }
+  
+  async getFullConfig() {
+    const config = await this.loadConfig();
+    const defaultConfig = this.getDefaultConfig();
+    
+    // Deep merge with defaults
+    return this.deepMerge(defaultConfig, config);
+  }
+  
+  deepMerge(target, source) {
+    const result = { ...target };
+    
+    for (const key in source) {
+      if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+        result[key] = this.deepMerge(result[key] || {}, source[key]);
+      } else {
+        result[key] = source[key];
+      }
+    }
+    
+    return result;
   }
 }
 
 const config = new Config();
 
 module.exports = {
-  setVaultPath: (vaultPath) => config.setVaultPath(vaultPath),
   getVaultPath: () => config.getVaultPath(),
-  setTaskLogFile: (taskLogFile) => config.setTaskLogFile(taskLogFile),
   getTaskLogFile: () => config.getTaskLogFile(),
-  loadConfig: () => config.loadConfig(),
+  getFullConfig: () => config.getFullConfig(),
   saveConfig: (configData) => config.saveConfig(configData)
 };

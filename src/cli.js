@@ -4,6 +4,8 @@ const { Command } = require('commander');
 const ObsidianCLI = require('./obsidian-cli');
 const config = require('./config');
 const chalk = require('chalk');
+const path = require('path');
+const fs = require('fs').promises;
 
 const program = new Command();
 
@@ -70,30 +72,108 @@ program
 
 program
   .command('config')
-  .description('Configure default vault path')
-  .argument('[vault-path]', 'Path to set as default vault')
-  .action(async (vaultPath) => {
-    if (vaultPath) {
-      await config.setVaultPath(vaultPath);
-      console.log(chalk.green(`Default vault set to: ${vaultPath}`));
-    } else {
-      const currentVault = await config.getVaultPath();
-      if (currentVault) {
-        console.log(chalk.blue(`Current default vault: ${currentVault}`));
-      } else {
-        console.log(chalk.yellow('No default vault configured'));
+  .description('Show current configuration or create/edit config file')
+  .option('--show', 'Show current configuration')
+  .option('--edit', 'Open config file in default editor')
+  .action(async (options) => {
+    const os = require('os');
+    const configPath = path.join(os.homedir(), '.obsidian-cli', 'config.yaml');
+    
+    if (options.edit) {
+      const { spawn } = require('child_process');
+      try {
+        await fs.access(configPath);
+      } catch (error) {
+        // Create default config if it doesn't exist
+        const fullConfig = await config.getFullConfig();
+        await config.saveConfig(fullConfig);
+        console.log(chalk.green(`Created config file: ${configPath}`));
       }
+      
+      // Open in default editor
+      const editor = process.env.EDITOR || 'nano';
+      spawn(editor, [configPath], { stdio: 'inherit' });
+      return;
+    }
+    
+    try {
+      const fullConfig = await config.getFullConfig();
+      const currentVault = await config.getVaultPath();
+      
+      if (options.show) {
+        console.log(chalk.blue('Current Configuration:'));
+        console.log(JSON.stringify(fullConfig, null, 2));
+      } else {
+        console.log(chalk.blue(`Config file: ${configPath}`));
+        if (currentVault) {
+          console.log(chalk.green(`Current vault: ${currentVault}`));
+        } else {
+          console.log(chalk.yellow('No vault configured'));
+        }
+        console.log(chalk.gray('Use --show to see full config, --edit to modify'));
+      }
+    } catch (error) {
+      console.error(chalk.red(`Error reading config: ${error.message}`));
     }
   });
 
 program
   .command('init')
-  .description('Initialize configuration with your vault path')
-  .action(async () => {
-    const vaultPath = '/Users/vitorcaneppele/Documents/Notes do Papai/zettelkasten vault';
-    await config.setVaultPath(vaultPath);
-    console.log(chalk.green(`Initialized with vault: ${vaultPath}`));
-    console.log(chalk.blue('You can now use commands without specifying --vault option'));
+  .description('Initialize Obsidian CLI with YAML configuration')
+  .option('-v, --vault <path>', 'Path to your Obsidian vault')
+  .option('--sample-config', 'Create a sample YAML config file in current directory')
+  .action(async (options) => {
+    const os = require('os');
+    const homeConfigPath = path.join(os.homedir(), '.obsidian-cli', 'config.yaml');
+    
+    try {
+      // Create sample config file if requested
+      if (options.sampleConfig) {
+        const sampleConfigPath = path.join(process.cwd(), 'obsidian-cli.config.yaml');
+        const templatePath = path.join(__dirname, '..', 'obsidian-cli.config.yaml');
+        
+        await fs.copyFile(templatePath, sampleConfigPath);
+        console.log(chalk.green(`✓ Sample config created: ${sampleConfigPath}`));
+        console.log(chalk.blue('Edit this file and copy it to ~/.obsidian-cli/config.yaml'));
+        return;
+      }
+
+      // Get vault path
+      let vaultPath = options.vault;
+      if (!vaultPath) {
+        const inquirer = require('inquirer');
+        const answers = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'vaultPath',
+            message: 'Enter the path to your Obsidian vault:',
+            validate: async (input) => {
+              try {
+                const stats = await fs.stat(input);
+                return stats.isDirectory() ? true : 'Path must be a directory';
+              } catch (error) {
+                return 'Path does not exist or is not accessible';
+              }
+            }
+          }
+        ]);
+        vaultPath = answers.vaultPath;
+      }
+
+      // Create config with vault path
+      const fullConfig = await config.getFullConfig();
+      fullConfig.vault.defaultPath = vaultPath;
+      
+      await config.saveConfig(fullConfig);
+      console.log(chalk.green(`✓ Configuration created: ${homeConfigPath}`));
+      console.log(chalk.green(`✓ Vault path set to: ${vaultPath}`));
+      console.log(chalk.blue('💡 Use "obsidian config --edit" to customize further'));
+      console.log(chalk.green('🎉 Setup complete!'));
+      
+    } catch (error) {
+      console.error(chalk.red(`Initialization failed: ${error.message}`));
+      process.exit(1);
+    }
   });
 
 if (require.main === module) {
