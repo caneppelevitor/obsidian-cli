@@ -37,9 +37,17 @@ Use these prefixes to add content to specific sections:
 - `? question here` → Adds to **Questions** section as `- question here`
 - `! insight or reflection` → Adds to **Insights** section as `- insight or reflection`
 
+### Task Logging
+
+All tasks created with the `[]` prefix are automatically logged to a centralized task log file in addition to being added to your daily note. This creates a master list of all tasks across all daily notes.
+
+**Task Log Features:**
+- Includes a backlink to the daily note where it was created
+- Maintains a complete history of all tasks
+- Configurable log file location (default: `tasks-log.md` in vault root)
+
 ### Interactive Mode
 
-- **Tab**: Switch between input and file view
 - **Enter**: Submit input
 - **Ctrl+C**: Exit
 - `/save`: Save file
