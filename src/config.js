@@ -28,48 +28,48 @@ class Config {
   getDefaultConfig() {
     return {
       vault: {
-        defaultPath: ""
+        defaultPath: ''
       },
       tasks: {
-        logFile: "tasks-log.md",
+        logFile: 'tasks-log.md',
         autoLog: true,
-        timestampFormat: "simple"
+        timestampFormat: 'simple'
       },
       dailyNotes: {
         sections: [
-          "Daily Log",
-          "Tasks", 
-          "Ideas",
-          "Questions",
-          "Insights",
-          "Links to Expand"
+          'Daily Log',
+          'Tasks', 
+          'Ideas',
+          'Questions',
+          'Insights',
+          'Links to Expand'
         ],
-        tags: ["#daily", "#inbox"],
-        titleFormat: "YYYY-MM-DD"
+        tags: ['#daily', '#inbox'],
+        titleFormat: 'YYYY-MM-DD'
       },
       interface: {
         theme: {
-          border: "cyan",
-          title: "white", 
-          content: "white",
-          input: "yellow",
-          highlight: "green"
+          border: 'cyan',
+          title: 'white', 
+          content: 'white',
+          input: 'yellow',
+          highlight: 'green'
         },
         autoScroll: true,
         showLineNumbers: true
       },
       organization: {
         sectionPrefixes: {
-          "[]": "Tasks",
-          "-": "Ideas",
-          "?": "Questions", 
-          "!": "Insights"
+          '[]': 'Tasks',
+          '-': 'Ideas',
+          '?': 'Questions', 
+          '!': 'Insights'
         }
       },
       advanced: {
         backup: {
           enabled: false,
-          directory: ".obsidian-cli-backups",
+          directory: '.obsidian-cli-backups',
           maxBackups: 5
         },
         performance: {
@@ -102,14 +102,12 @@ class Config {
       throw new Error(`Vault path does not exist or is not accessible: ${vaultPath}`);
     }
 
-    // Ensure vault object exists
     if (!config.vault) {
       config.vault = {};
     }
     
     config.vault.defaultPath = vaultPath;
     
-    // Ensure tasks object exists with defaults
     if (!config.tasks) {
       config.tasks = {
         logFile: 'tasks-log.md',
@@ -126,7 +124,6 @@ class Config {
   async setTaskLogFile(taskLogFile) {
     const config = await this.loadConfig();
     
-    // Ensure tasks object exists
     if (!config.tasks) {
       config.tasks = {};
     }
@@ -157,7 +154,6 @@ class Config {
     const config = await this.loadConfig();
     const defaultConfig = this.getDefaultConfig();
     
-    // Deep merge with defaults
     return this.deepMerge(defaultConfig, config);
   }
   

@@ -84,13 +84,11 @@ program
       try {
         await fs.access(configPath);
       } catch (error) {
-        // Create default config if it doesn't exist
         const fullConfig = await config.getFullConfig();
         await config.saveConfig(fullConfig);
         console.log(chalk.green(`Created config file: ${configPath}`));
       }
       
-      // Open in default editor
       const editor = process.env.EDITOR || 'nano';
       spawn(editor, [configPath], { stdio: 'inherit' });
       return;
@@ -118,6 +116,24 @@ program
   });
 
 program
+  .command('tasks')
+  .description('View and manage tasks from the centralized task log')
+  .option('-v, --vault <path>', 'Path to Obsidian vault')
+  .option('--pending', 'Show only unchecked tasks')
+  .option('--recent [days]', 'Show tasks from last N days (default: 7)', '7')
+  .option('--complete <taskIndex>', 'Mark task as complete by index number')
+  .action(async (options) => {
+    const vaultPath = options.vault || await config.getVaultPath();
+    if (!vaultPath) {
+      console.error(chalk.red('No vault path specified. Use --vault option or set default vault.'));
+      process.exit(1);
+    }
+
+    const cli = new ObsidianCLI(vaultPath);
+    await cli.manageTasks(options);
+  });
+
+program
   .command('init')
   .description('Initialize Obsidian CLI with YAML configuration')
   .option('-v, --vault <path>', 'Path to your Obsidian vault')
@@ -127,7 +143,6 @@ program
     const homeConfigPath = path.join(os.homedir(), '.obsidian-cli', 'config.yaml');
     
     try {
-      // Create sample config file if requested
       if (options.sampleConfig) {
         const sampleConfigPath = path.join(process.cwd(), 'obsidian-cli.config.yaml');
         const templatePath = path.join(__dirname, '..', 'obsidian-cli.config.yaml');
@@ -138,7 +153,6 @@ program
         return;
       }
 
-      // Get vault path
       let vaultPath = options.vault;
       if (!vaultPath) {
         const inquirer = require('inquirer');
@@ -160,7 +174,6 @@ program
         vaultPath = answers.vaultPath;
       }
 
-      // Create config with vault path
       const fullConfig = await config.getFullConfig();
       fullConfig.vault.defaultPath = vaultPath;
       

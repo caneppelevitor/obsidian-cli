@@ -33,7 +33,7 @@ class ObsidianCLI {
       try {
         existingContent = await fs.readFile(taskLogPath, 'utf-8');
       } catch (error) {
-        const header = `# Task Log\n\nCentralized log of all tasks created across daily notes.\n\n`;
+        const header = '# Task Log\n\nCentralized log of all tasks created across daily notes.\n\n';
         existingContent = header;
       }
       
@@ -326,18 +326,18 @@ class ObsidianCLI {
     let insertLine;
     
     switch (insertionMode) {
-      case 'append':
-        this.currentContent += '\n' + content;
-        insertLine = lines.length + 1;
-        break;
-      case 'prepend':
-        this.currentContent = content + '\n' + this.currentContent;
-        insertLine = 1;
-        break;
-      case 'replace':
-        this.currentContent = content;
-        insertLine = 1;
-        break;
+    case 'append':
+      this.currentContent += '\n' + content;
+      insertLine = lines.length + 1;
+      break;
+    case 'prepend':
+      this.currentContent = content + '\n' + this.currentContent;
+      insertLine = 1;
+      break;
+    case 'replace':
+      this.currentContent = content;
+      insertLine = 1;
+      break;
     }
 
     this.lastInsertedLine = insertLine;
@@ -406,52 +406,52 @@ class ObsidianCLI {
       if (isExiting) return;
 
       switch (key) {
-        case '\u0003':
-          console.log('\n' + chalk.yellow('Goodbye!'));
-          process.stdin.setRawMode(false);
-          process.exit(0);
-          break;
+      case '\u0003':
+        console.log('\n' + chalk.yellow('Goodbye!'));
+        process.stdin.setRawMode(false);
+        process.exit(0);
+        break;
 
-        case '\r':
-        case '\n':
-          process.stdout.write('\n');
-          if (inputBuffer.trim()) {
-            await this.processInput(inputBuffer);
-          }
-          inputBuffer = '';
-          cursorPos = 0;
+      case '\r':
+      case '\n':
+        process.stdout.write('\n');
+        if (inputBuffer.trim()) {
+          await this.processInput(inputBuffer);
+        }
+        inputBuffer = '';
+        cursorPos = 0;
+        drawPrompt();
+        break;
+
+      case '\u007f':
+        if (cursorPos > 0) {
+          inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
+          cursorPos--;
           drawPrompt();
-          break;
+        }
+        break;
 
-        case '\u007f':
-          if (cursorPos > 0) {
-            inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
-            cursorPos--;
-            drawPrompt();
-          }
-          break;
+      case '\u001b[D':
+        if (cursorPos > 0) {
+          cursorPos--;
+          drawPrompt();
+        }
+        break;
 
-        case '\u001b[D':
-          if (cursorPos > 0) {
-            cursorPos--;
-            drawPrompt();
-          }
-          break;
+      case '\u001b[C':
+        if (cursorPos < inputBuffer.length) {
+          cursorPos++;
+          drawPrompt();
+        }
+        break;
 
-        case '\u001b[C':
-          if (cursorPos < inputBuffer.length) {
-            cursorPos++;
-            drawPrompt();
-          }
-          break;
-
-        default:
-          if (key >= ' ' && key <= '~') {
-            inputBuffer = inputBuffer.slice(0, cursorPos) + key + inputBuffer.slice(cursorPos);
-            cursorPos++;
-            drawPrompt();
-          }
-          break;
+      default:
+        if (key >= ' ' && key <= '~') {
+          inputBuffer = inputBuffer.slice(0, cursorPos) + key + inputBuffer.slice(cursorPos);
+          cursorPos++;
+          drawPrompt();
+        }
+        break;
       }
     };
 
@@ -466,56 +466,57 @@ class ObsidianCLI {
       const command = input.slice(1).toLowerCase().trim();
 
       switch (command) {
-        case 'view':
-          return false;
+      case 'view':
+        return false;
 
-        case 'save':
-          await this.saveCurrentFileContent();
-          return false;
+      case 'save':
+        await this.saveCurrentFileContent();
+        return false;
 
-        case 'files':
-          return false;
+      case 'files':
+        return false;
 
-        case 'open':
+      case 'open': {
+        const files = await this.getMarkdownFiles(this.vaultPath);
+        if (files && files.length > 0) {
+          return false;
+        }
+        break;
+      }
+
+      case 'daily':
+        await this.openDailyNote();
+        return true;
+
+      case 'exit':
+        process.exit(0);
+        break;
+
+      case 'help':
+        return false;
+
+      default:
+        if (command.startsWith('open ')) {
+          const target = command.slice(5).trim();
           const files = await this.getMarkdownFiles(this.vaultPath);
-          if (files && files.length > 0) {
-            return false;
+
+          let filename;
+          const num = parseInt(target);
+
+          if (!isNaN(num) && num > 0 && num <= files.length) {
+            filename = files[num - 1];
+          } else {
+            filename = target;
           }
-          break;
 
-        case 'daily':
-          await this.openDailyNote();
-          return true;
-
-        case 'exit':
-          process.exit(0);
-          break;
-
-        case 'help':
-          return false;
-
-        default:
-          if (command.startsWith('open ')) {
-            const target = command.slice(5).trim();
-            const files = await this.getMarkdownFiles(this.vaultPath);
-
-            let filename;
-            const num = parseInt(target);
-
-            if (!isNaN(num) && num > 0 && num <= files.length) {
-              filename = files[num - 1];
-            } else {
-              filename = target;
-            }
-
-            if (files.includes(filename)) {
-              this.currentFile = path.join(this.vaultPath, filename);
-              await this.loadCurrentFileContent();
-              return true;
-            }
-            return false;
+          if (files.includes(filename)) {
+            this.currentFile = path.join(this.vaultPath, filename);
+            await this.loadCurrentFileContent();
+            return true;
           }
           return false;
+        }
+        return false;
       }
     } else {
       return await this.processContentInput(input);
@@ -756,47 +757,47 @@ class ObsidianCLI {
 
       if (key && key.name) {
         switch (key.name) {
-          case 'return':
-          case 'enter':
-            if (inputBuffer.trim()) {
-              const success = await this.processInput(inputBuffer);
-              if (success !== false) {
-                updateNotesDisplay();
-              }
+        case 'return':
+        case 'enter':
+          if (inputBuffer.trim()) {
+            const success = await this.processInput(inputBuffer);
+            if (success !== false) {
+              updateNotesDisplay();
             }
-            clearInput();
-            return;
+          }
+          clearInput();
+          return;
 
-          case 'backspace':
-            deleteChar();
-            return;
+        case 'backspace':
+          deleteChar();
+          return;
 
-          case 'delete':
-            deleteCharForward();
-            return;
+        case 'delete':
+          deleteCharForward();
+          return;
 
-          case 'left':
-            moveCursorLeft();
-            return;
+        case 'left':
+          moveCursorLeft();
+          return;
 
-          case 'right':
-            moveCursorRight();
-            return;
+        case 'right':
+          moveCursorRight();
+          return;
 
-          case 'home':
-            moveCursorHome();
-            return;
+        case 'home':
+          moveCursorHome();
+          return;
 
-          case 'end':
-            moveCursorEnd();
-            return;
+        case 'end':
+          moveCursorEnd();
+          return;
 
-          case 'escape':
-            clearInput();
-            return;
+        case 'escape':
+          clearInput();
+          return;
 
-          case 'tab':
-            return;
+        case 'tab':
+          return;
         }
       }
 
@@ -887,6 +888,157 @@ class ObsidianCLI {
       }
       rl.close();
     });
+  }
+
+  async manageTasks(options) {
+    try {
+      const tasks = await this.readTaskLog();
+      
+      if (options.complete) {
+        return await this.completeTask(parseInt(options.complete) - 1, tasks);
+      }
+      
+      let filteredTasks = tasks;
+      
+      if (options.pending) {
+        filteredTasks = tasks.filter(task => !task.completed);
+      }
+      
+      if (options.recent) {
+        const days = parseInt(options.recent);
+        filteredTasks = await this.filterRecentTasks(filteredTasks, days);
+      }
+      
+      this.displayTasks(filteredTasks, options);
+      
+    } catch (error) {
+      console.error(chalk.red(`Error managing tasks: ${error.message}`));
+    }
+  }
+
+  async readTaskLog() {
+    const taskLogPath = await this.getTaskLogPath();
+    
+    try {
+      const content = await fs.readFile(taskLogPath, 'utf-8');
+      const lines = content.split('\n');
+      const tasks = [];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('- [ ]') || line.startsWith('- [x]')) {
+          const completed = line.startsWith('- [x]');
+          const taskMatch = line.match(/^- \[.\] (.+?)( \*\[\[(.+?)\]\]\*)?$/);
+          
+          if (taskMatch) {
+            tasks.push({
+              index: tasks.length,
+              content: taskMatch[1],
+              completed,
+              sourceFile: taskMatch[3] || 'unknown',
+              lineNumber: i,
+              originalLine: line
+            });
+          }
+        }
+      }
+      
+      return tasks;
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        console.log(chalk.yellow('No task log found. Create some tasks first!'));
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async filterRecentTasks(tasks, days) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    
+    const recentTasks = [];
+    
+    for (const task of tasks) {
+      try {
+        const sourceFilePath = path.join(this.vaultPath, task.sourceFile + '.md');
+        const stats = await fs.stat(sourceFilePath);
+        
+        if (stats.mtime >= cutoffDate) {
+          recentTasks.push(task);
+        }
+      } catch (error) {
+        recentTasks.push(task);
+      }
+    }
+    
+    return recentTasks;
+  }
+
+  displayTasks(tasks, options) {
+    if (tasks.length === 0) {
+      console.log(chalk.yellow('No tasks found matching your criteria.'));
+      return;
+    }
+    
+    const title = options.pending ? 'Pending Tasks' : 
+      options.recent ? `Tasks from last ${options.recent} days` : 
+        'All Tasks';
+    
+    console.log(chalk.blue.bold(`\n${title}:`));
+    console.log(chalk.gray('─'.repeat(50)));
+    
+    tasks.forEach((task, displayIndex) => {
+      const status = task.completed ? chalk.green('✓') : chalk.red('○');
+      const indexStr = chalk.gray(`[${displayIndex + 1}]`);
+      const content = task.completed ? chalk.strikethrough(task.content) : task.content;
+      const source = chalk.gray(`(${task.sourceFile})`);
+      
+      console.log(`${indexStr} ${status} ${content} ${source}`);
+    });
+    
+    if (!options.pending && !options.complete) {
+      const pendingCount = tasks.filter(t => !t.completed).length;
+      const completedCount = tasks.filter(t => t.completed).length;
+      
+      console.log(chalk.gray('─'.repeat(50)));
+      console.log(chalk.blue(`Total: ${tasks.length} | Pending: ${pendingCount} | Completed: ${completedCount}`));
+    }
+    
+    console.log(chalk.gray('\nTip: Use --complete <number> to mark a task as done'));
+  }
+
+  async completeTask(taskIndex, tasks = null) {
+    if (!tasks) {
+      tasks = await this.readTaskLog();
+    }
+    
+    if (taskIndex < 0 || taskIndex >= tasks.length) {
+      console.error(chalk.red(`Invalid task index. Use a number between 1 and ${tasks.length}`));
+      return;
+    }
+    
+    const task = tasks[taskIndex];
+    
+    if (task.completed) {
+      console.log(chalk.yellow('Task is already completed!'));
+      return;
+    }
+    
+    try {
+      const taskLogPath = await this.getTaskLogPath();
+      const content = await fs.readFile(taskLogPath, 'utf-8');
+      const lines = content.split('\n');
+      
+      lines[task.lineNumber] = lines[task.lineNumber].replace('- [ ]', '- [x]');
+      
+      await fs.writeFile(taskLogPath, lines.join('\n'));
+      
+      console.log(chalk.green(`✓ Task completed: ${task.content}`));
+      
+    } catch (error) {
+      console.error(chalk.red(`Error completing task: ${error.message}`));
+    }
   }
 }
 
