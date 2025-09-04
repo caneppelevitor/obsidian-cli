@@ -461,7 +461,7 @@ class ObsidianCLI {
     }};
   }
 
-  async processInput(input) {
+  async processInput(input, currentTab = 0, tasksDisplay = null) {
     if (input.startsWith('/')) {
       const command = input.slice(1).toLowerCase().trim();
 
@@ -518,6 +518,25 @@ class ObsidianCLI {
         }
         return false;
       }
+    } else if (currentTab === 1 && /^\d+$/.test(input.trim())) {
+      const taskIndex = parseInt(input.trim()) - 1;
+      const tasks = await this.readTaskLog();
+      const pendingTasks = tasks.filter(task => !task.completed);
+      
+      if (taskIndex >= 0 && taskIndex < pendingTasks.length) {
+        const originalTaskIndex = tasks.findIndex(task => 
+          task.content === pendingTasks[taskIndex].content && 
+          !task.completed
+        );
+        
+        await this.completeTask(originalTaskIndex, tasks, true);
+        if (tasksDisplay) {
+          await this.updateTasksDisplay(tasksDisplay);
+        }
+        return 'task_completed';
+      } else {
+        return 'invalid_task_number';
+      }
     } else {
       return await this.processContentInput(input);
     }
@@ -535,12 +554,29 @@ class ObsidianCLI {
       warnings: false
     });
 
+    let currentTab = 0;
+    const tabs = ['Daily Note', 'Tasks'];
+
+    const tabBar = blessed.text({
+      parent: screen,
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: 1,
+      style: {
+        bg: 'blue',
+        fg: 'white'
+      },
+      content: this.renderTabBar(tabs, currentTab),
+      tags: true
+    });
+
     const notesDisplay = blessed.text({
       parent: screen,
-      top: 1,
+      top: 2,
       left: 1,
       width: '100%-2',
-      height: '80%',
+      height: '80%-1',
       border: {
         type: 'line'
       },
@@ -564,6 +600,38 @@ class ObsidianCLI {
           bold: true
         }
       }
+    });
+
+    const tasksDisplay = blessed.text({
+      parent: screen,
+      top: 2,
+      left: 1,
+      width: '100%-2',
+      height: '80%-1',
+      border: {
+        type: 'line'
+      },
+      style: {
+        fg: 'white'
+      },
+      content: '',
+      scrollable: true,
+      alwaysScroll: true,
+      focusable: true,
+      mouse: true,
+      clickable: true,
+      keyable: true,
+      keys: true,
+      tags: true,
+      label: {
+        text: ' Pending Tasks ',
+        side: 'left',
+        style: {
+          fg: 'yellow',
+          bold: true
+        }
+      },
+      hidden: true
     });
 
     const statusLine = blessed.text({
@@ -760,8 +828,14 @@ class ObsidianCLI {
         case 'return':
         case 'enter':
           if (inputBuffer.trim()) {
-            const success = await this.processInput(inputBuffer);
-            if (success !== false) {
+            const success = await this.processInput(inputBuffer, currentTab, tasksDisplay);
+            if (success === 'task_completed') {
+              clearInput();
+              return;
+            } else if (success === 'invalid_task_number') {
+              clearInput();
+              return;
+            } else if (success !== false) {
               updateNotesDisplay();
             }
           }
@@ -810,17 +884,16 @@ class ObsidianCLI {
     });
 
 
-    screen.key('tab', () => {
-      if (inputBox.focused) {
-        notesDisplay.focus();
-      } else {
-        inputBox.focus();
-      }
-      screen.render();
-    });
 
     screen.key(['escape', 'C-c'], () => {
       process.exit(0);
+    });
+
+    screen.key('tab', async () => {
+      currentTab = (currentTab + 1) % tabs.length;
+      tabBar.setContent(this.renderTabBar(tabs, currentTab));
+      await this.switchTab(currentTab, notesDisplay, tasksDisplay);
+      screen.render();
     });
 
     screen.key('q', () => {
@@ -1008,20 +1081,24 @@ class ObsidianCLI {
     console.log(chalk.gray('\nTip: Use --complete <number> to mark a task as done'));
   }
 
-  async completeTask(taskIndex, tasks = null) {
+  async completeTask(taskIndex, tasks = null, silent = false) {
     if (!tasks) {
       tasks = await this.readTaskLog();
     }
     
     if (taskIndex < 0 || taskIndex >= tasks.length) {
-      console.error(chalk.red(`Invalid task index. Use a number between 1 and ${tasks.length}`));
+      if (!silent) {
+        console.error(chalk.red(`Invalid task index. Use a number between 1 and ${tasks.length}`));
+      }
       return;
     }
     
     const task = tasks[taskIndex];
     
     if (task.completed) {
-      console.log(chalk.yellow('Task is already completed!'));
+      if (!silent) {
+        console.log(chalk.yellow('Task is already completed!'));
+      }
       return;
     }
     
@@ -1034,10 +1111,63 @@ class ObsidianCLI {
       
       await fs.writeFile(taskLogPath, lines.join('\n'));
       
-      console.log(chalk.green(`✓ Task completed: ${task.content}`));
+      if (!silent) {
+        console.log(chalk.green(`✓ Task completed: ${task.content}`));
+      }
       
     } catch (error) {
-      console.error(chalk.red(`Error completing task: ${error.message}`));
+      if (!silent) {
+        console.error(chalk.red(`Error completing task: ${error.message}`));
+      }
+    }
+  }
+
+  renderTabBar(tabs, activeTab) {
+    return tabs.map((tab, index) => {
+      if (index === activeTab) {
+        return `{inverse} ${tab} {/inverse}`;
+      } else {
+        return ` ${tab} `;
+      }
+    }).join('');
+  }
+
+  async switchTab(tabIndex, notesDisplay, tasksDisplay) {
+    if (tabIndex === 0) {
+      tasksDisplay.hide();
+      notesDisplay.show();
+    } else if (tabIndex === 1) {
+      notesDisplay.hide();
+      tasksDisplay.show();
+      await this.updateTasksDisplay(tasksDisplay);
+    }
+  }
+
+  async updateTasksDisplay(tasksDisplay) {
+    try {
+      const tasks = await this.readTaskLog();
+      const pendingTasks = tasks.filter(task => !task.completed);
+      
+      if (pendingTasks.length === 0) {
+        tasksDisplay.setContent('\nNo pending tasks!\n\nCreate some tasks in your daily note using [] prefix');
+        return;
+      }
+
+      let content = '{cyan-fg}──────────────────────────────────────────────────{/cyan-fg}\n';
+      
+      pendingTasks.forEach((task, index) => {
+        const taskNum = `{yellow-fg}[${index + 1}]{/yellow-fg}`;
+        const taskIcon = '{red-fg}○{/red-fg}';
+        const taskContent = `{white-fg}${task.content}{/white-fg}`;
+        const taskSource = `{gray-fg}(${task.sourceFile}){/gray-fg}`;
+        content += `${taskNum} ${taskIcon} ${taskContent} ${taskSource}\n`;
+      });
+      
+      content += '\n{gray-fg}Tip: Type a number (1-' + pendingTasks.length + ') and press Enter to complete that task{/gray-fg}';
+      
+      tasksDisplay.setContent(content);
+    } catch (error) {
+      tasksDisplay.setContent(`Error loading tasks: ${error.message}`);
     }
   }
 }
