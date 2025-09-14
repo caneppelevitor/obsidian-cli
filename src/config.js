@@ -30,9 +30,23 @@ class Config {
       vault: {
         defaultPath: ''
       },
-      tasks: {
-        logFile: 'tasks-log.md',
-        autoLog: true,
+      logging: {
+        tasks: {
+          logFile: 'tasks-log.md',
+          autoLog: true
+        },
+        ideas: {
+          logFile: 'ideas-log.md',
+          autoLog: true
+        },
+        questions: {
+          logFile: 'questions-log.md',
+          autoLog: true
+        },
+        insights: {
+          logFile: 'insights-log.md',
+          autoLog: true
+        },
         timestampFormat: 'simple'
       },
       dailyNotes: {
@@ -108,14 +122,39 @@ class Config {
     
     config.vault.defaultPath = vaultPath;
     
-    if (!config.tasks) {
-      config.tasks = {
-        logFile: 'tasks-log.md',
-        autoLog: true,
+    if (!config.logging) {
+      config.logging = {
+        tasks: {
+          logFile: 'tasks-log.md',
+          autoLog: true
+        },
+        ideas: {
+          logFile: 'ideas-log.md',
+          autoLog: true
+        },
+        questions: {
+          logFile: 'questions-log.md',
+          autoLog: true
+        },
+        insights: {
+          logFile: 'insights-log.md',
+          autoLog: true
+        },
         timestampFormat: 'simple'
       };
-    } else if (!config.tasks.logFile) {
-      config.tasks.logFile = 'tasks-log.md';
+    } else {
+      if (!config.logging.tasks?.logFile) {
+        config.logging.tasks = { ...config.logging.tasks, logFile: 'tasks-log.md' };
+      }
+      if (!config.logging.ideas?.logFile) {
+        config.logging.ideas = { ...config.logging.ideas, logFile: 'ideas-log.md' };
+      }
+      if (!config.logging.questions?.logFile) {
+        config.logging.questions = { ...config.logging.questions, logFile: 'questions-log.md' };
+      }
+      if (!config.logging.insights?.logFile) {
+        config.logging.insights = { ...config.logging.insights, logFile: 'insights-log.md' };
+      }
     }
     
     await this.saveConfig(config);
@@ -135,9 +174,36 @@ class Config {
   async getTaskLogFile() {
     try {
       const config = await this.loadConfig();
-      return config.tasks?.logFile || 'tasks-log.md';
+      return config.logging?.tasks?.logFile || 'tasks-log.md';
     } catch (error) {
       return 'tasks-log.md';
+    }
+  }
+
+  async getIdeasLogFile() {
+    try {
+      const config = await this.loadConfig();
+      return config.logging?.ideas?.logFile || 'ideas-log.md';
+    } catch (error) {
+      return 'ideas-log.md';
+    }
+  }
+
+  async getQuestionsLogFile() {
+    try {
+      const config = await this.loadConfig();
+      return config.logging?.questions?.logFile || 'questions-log.md';
+    } catch (error) {
+      return 'questions-log.md';
+    }
+  }
+
+  async getInsightsLogFile() {
+    try {
+      const config = await this.loadConfig();
+      return config.logging?.insights?.logFile || 'insights-log.md';
+    } catch (error) {
+      return 'insights-log.md';
     }
   }
 
@@ -177,6 +243,9 @@ const config = new Config();
 module.exports = {
   getVaultPath: () => config.getVaultPath(),
   getTaskLogFile: () => config.getTaskLogFile(),
+  getIdeasLogFile: () => config.getIdeasLogFile(),
+  getQuestionsLogFile: () => config.getQuestionsLogFile(),
+  getInsightsLogFile: () => config.getInsightsLogFile(),
   getFullConfig: () => config.getFullConfig(),
   saveConfig: (configData) => config.saveConfig(configData)
 };

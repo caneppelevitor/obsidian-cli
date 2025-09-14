@@ -8,15 +8,41 @@ vault:
   # Example: /Users/username/Documents/MyVault
   defaultPath: ""
   
-# Task logging configuration
-tasks:
-  # Name of the central task log file (default: tasks-log.md)
-  logFile: "tasks-log.md"
-  
-  # Whether to automatically log all tasks to the central file (default: true)
-  autoLog: true
-  
-  # Format for task timestamps in the log file
+# Centralized logging configuration
+logging:
+  # Task logging
+  tasks:
+    # Name of the central task log file (default: tasks-log.md)
+    logFile: "tasks-log.md"
+
+    # Whether to automatically log all tasks to the central file (default: true)
+    autoLog: true
+
+  # Ideas logging
+  ideas:
+    # Name of the central ideas log file (default: ideas-log.md)
+    logFile: "ideas-log.md"
+
+    # Whether to automatically log all ideas to the central file (default: true)
+    autoLog: true
+
+  # Questions logging
+  questions:
+    # Name of the central questions log file (default: questions-log.md)
+    logFile: "questions-log.md"
+
+    # Whether to automatically log all questions to the central file (default: true)
+    autoLog: true
+
+  # Insights logging
+  insights:
+    # Name of the central insights log file (default: insights-log.md)
+    logFile: "insights-log.md"
+
+    # Whether to automatically log all insights to the central file (default: true)
+    autoLog: true
+
+  # Format for timestamps in log files
   # Options: "iso" (2024-01-01T10:30:00Z), "simple" (2024-01-01 10:30), "none"
   timestampFormat: "simple"
 

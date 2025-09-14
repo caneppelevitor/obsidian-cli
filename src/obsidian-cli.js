@@ -22,6 +22,21 @@ class ObsidianCLI {
     return path.join(this.vaultPath, taskLogFile);
   }
 
+  async getIdeasLogPath() {
+    const ideasLogFile = await config.getIdeasLogFile();
+    return path.join(this.vaultPath, ideasLogFile);
+  }
+
+  async getQuestionsLogPath() {
+    const questionsLogFile = await config.getQuestionsLogFile();
+    return path.join(this.vaultPath, questionsLogFile);
+  }
+
+  async getInsightsLogPath() {
+    const insightsLogFile = await config.getInsightsLogFile();
+    return path.join(this.vaultPath, insightsLogFile);
+  }
+
   async logTaskToCentralFile(taskContent) {
     const taskLogPath = await this.getTaskLogPath();
     const sourceFile = this.currentFile ? path.basename(this.currentFile, '.md') : 'unknown';
@@ -61,6 +76,123 @@ class ObsidianCLI {
     }
   }
 
+  async logIdeasToCentralFile(ideaContent) {
+    const ideasLogPath = await this.getIdeasLogPath();
+    const sourceFile = this.currentFile ? path.basename(this.currentFile, '.md') : 'unknown';
+
+    const logEntry = `- ${ideaContent} *[[${sourceFile}]]*`;
+
+    try {
+      let existingContent = '';
+      try {
+        existingContent = await fs.readFile(ideasLogPath, 'utf-8');
+      } catch (error) {
+        const header = '# Ideas Log\n\nCentralized log of all ideas captured across daily notes.\n\n';
+        existingContent = header;
+      }
+
+      const lines = existingContent.split('\n');
+
+      let insertIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('- ') && !lines[i].includes('[ ]') && !lines[i].includes('[x]')) {
+          insertIndex = i;
+          break;
+        }
+      }
+
+      if (insertIndex === -1) {
+        lines.push('', logEntry);
+      } else {
+        lines.splice(insertIndex, 0, logEntry);
+      }
+
+      const updatedContent = lines.join('\n');
+      await fs.writeFile(ideasLogPath, updatedContent);
+
+    } catch (error) {
+      console.error('Error logging idea to central file:', error.message);
+    }
+  }
+
+  async logQuestionsToCentralFile(questionContent) {
+    const questionsLogPath = await this.getQuestionsLogPath();
+    const sourceFile = this.currentFile ? path.basename(this.currentFile, '.md') : 'unknown';
+
+    const logEntry = `- ${questionContent} *[[${sourceFile}]]*`;
+
+    try {
+      let existingContent = '';
+      try {
+        existingContent = await fs.readFile(questionsLogPath, 'utf-8');
+      } catch (error) {
+        const header = '# Questions Log\n\nCentralized log of all questions captured across daily notes.\n\n';
+        existingContent = header;
+      }
+
+      const lines = existingContent.split('\n');
+
+      let insertIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('- ') && !lines[i].includes('[ ]') && !lines[i].includes('[x]')) {
+          insertIndex = i;
+          break;
+        }
+      }
+
+      if (insertIndex === -1) {
+        lines.push('', logEntry);
+      } else {
+        lines.splice(insertIndex, 0, logEntry);
+      }
+
+      const updatedContent = lines.join('\n');
+      await fs.writeFile(questionsLogPath, updatedContent);
+
+    } catch (error) {
+      console.error('Error logging question to central file:', error.message);
+    }
+  }
+
+  async logInsightsToCentralFile(insightContent) {
+    const insightsLogPath = await this.getInsightsLogPath();
+    const sourceFile = this.currentFile ? path.basename(this.currentFile, '.md') : 'unknown';
+
+    const logEntry = `- ${insightContent} *[[${sourceFile}]]*`;
+
+    try {
+      let existingContent = '';
+      try {
+        existingContent = await fs.readFile(insightsLogPath, 'utf-8');
+      } catch (error) {
+        const header = '# Insights Log\n\nCentralized log of all insights captured across daily notes.\n\n';
+        existingContent = header;
+      }
+
+      const lines = existingContent.split('\n');
+
+      let insertIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim().startsWith('- ') && !lines[i].includes('[ ]') && !lines[i].includes('[x]')) {
+          insertIndex = i;
+          break;
+        }
+      }
+
+      if (insertIndex === -1) {
+        lines.push('', logEntry);
+      } else {
+        lines.splice(insertIndex, 0, logEntry);
+      }
+
+      const updatedContent = lines.join('\n');
+      await fs.writeFile(insightsLogPath, updatedContent);
+
+    } catch (error) {
+      console.error('Error logging insight to central file:', error.message);
+    }
+  }
+
   processTemplate(template) {
     const now = new Date();
     const year = now.getFullYear();
@@ -81,14 +213,17 @@ class ObsidianCLI {
     } else if (trimmed.startsWith('-')) {
       const content = trimmed.slice(1).trim();
       await this.addToSection('Ideas', `- ${content}`);
+      await this.logIdeasToCentralFile(content);
       return true;
     } else if (trimmed.startsWith('?')) {
       const content = trimmed.slice(1).trim();
       await this.addToSection('Questions', `- ${content}`);
+      await this.logQuestionsToCentralFile(content);
       return true;
     } else if (trimmed.startsWith('!')) {
       const content = trimmed.slice(1).trim();
       await this.addToSection('Insights', `- ${content}`);
+      await this.logInsightsToCentralFile(content);
       return true;
     } else {
       return await this.addContent(trimmed);
@@ -753,6 +888,7 @@ class ObsidianCLI {
       renderInput();
     };
 
+
     const styleLineContent = (line) => {
       if (line.match(/^##\s+/)) {
         return `{cyan-fg}{bold}${line}{/bold}{/cyan-fg}`;
@@ -816,12 +952,13 @@ class ObsidianCLI {
     let lastProcessedTime = 0;
     screen.on('keypress', async (ch, key) => {
       if (!inputBox.focused) return;
-      
+
       const now = Date.now();
       if (now - lastProcessedTime < 50) {
         return;
       }
       lastProcessedTime = now;
+
 
       if (key && key.name) {
         switch (key.name) {
