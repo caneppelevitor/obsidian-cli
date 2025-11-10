@@ -3,6 +3,8 @@
 Terminal interface for managing daily notes in Obsidian with section-based organization and task logging.
 
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/91509a6b-9116-48d9-94ed-cdbc8189b285" />
+<img width="1918" height="1080" alt="image" src="https://github.com/user-attachments/assets/96aff95a-f9b2-4aa8-9a4e-c18189a0ba1e" />
+
 
 ## Setup
 
