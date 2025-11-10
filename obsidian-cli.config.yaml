@@ -76,12 +76,34 @@ interface:
     content: "white"
     input: "yellow"
     highlight: "green"
-    
+
   # Scrolling behavior
   autoScroll: true
-  
+
   # Show line numbers in content view
   showLineNumbers: true
+
+  # Eisenhower Matrix tag colors
+  # Tags for priority management based on the Eisenhower Matrix
+  # Use 256-color palette indices (recommended) for vivid, consistent colors
+  # Or use named colors for basic 16-color support
+  eisenhowerTags:
+    "#do": "196"        # Urgent & Important - Do it now (bright red, 256-color index)
+    "#delegate": "214"  # Urgent & Not Important - Delegate (orange, 256-color index)
+    "#schedule": "33"   # Not Urgent & Important - Schedule (bright blue, 256-color index)
+    "#eliminate": "244" # Not Urgent & Not Important - Eliminate (gray, 256-color index)
+
+    # Alternative: Named colors (basic 16-color palette)
+    # "#do": "red"
+    # "#delegate": "yellow"
+    # "#schedule": "blue"
+    # "#eliminate": "gray"
+
+    # Color palette reference (256-color indices):
+    # Reds: 196 (bright), 124 (darker), 88 (darkest)
+    # Oranges: 214 (bright), 208 (standard)
+    # Blues: 33 (bright), 27 (medium), 21 (dark)
+    # Grays: 250 (light), 244 (medium), 238 (dark)
 
 # File organization
 organization:

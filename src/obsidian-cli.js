@@ -11,10 +11,18 @@ class ObsidianCLI {
     this.currentFile = null;
     this.currentContent = '';
     this.lastInsertedLine = null;
+    this.eisenhowerTags = null;
   }
 
   getTodayDate() {
     return new Date().toISOString().split('T')[0];
+  }
+
+  async loadEisenhowerTags() {
+    if (!this.eisenhowerTags) {
+      this.eisenhowerTags = await config.getEisenhowerTags();
+    }
+    return this.eisenhowerTags;
   }
 
   async getTaskLogPath() {
@@ -325,6 +333,8 @@ class ObsidianCLI {
 
     this.currentFile = dailyNotePath;
     await this.loadCurrentFileContent();
+    await this.loadEisenhowerTags();
+    console.log(chalk.gray(`Loaded Eisenhower tags: ${Object.keys(this.eisenhowerTags || {}).join(', ')}`));
     await this.startInteractiveMode();
   }
 
@@ -678,6 +688,8 @@ class ObsidianCLI {
   }
 
   async startInteractiveMode() {
+    // Ensure tags are loaded before creating interface
+    await this.loadEisenhowerTags();
     return this.createClaudeStyleInterface();
   }
 
@@ -890,27 +902,66 @@ class ObsidianCLI {
 
 
     const styleLineContent = (line) => {
+      // Determine the parent color based on line type
+      let parentColor = '';
+      let needsParentColor = false;
+
       if (line.match(/^##\s+/)) {
-        return `{cyan-fg}{bold}${line}{/bold}{/cyan-fg}`;
+        parentColor = 'cyan';
+      } else if (line.match(/^#\s+/)) {
+        parentColor = 'magenta';
+      } else if (line.match(/^\s*-\s+\[[ x]\]\s+/)) {
+        parentColor = 'green';
+        needsParentColor = true;
+      } else if (line.match(/^\s*-\s+/)) {
+        parentColor = 'yellow';
+        needsParentColor = true;
+      } else if (line.match(/^#\w+/)) {
+        parentColor = 'blue';
       }
-      
+
+      // Apply Eisenhower tag highlighting
+      let processedLine = line;
+      if (this.eisenhowerTags && needsParentColor) {
+        for (const [tag, color] of Object.entries(this.eisenhowerTags)) {
+          if (line.includes(tag)) {
+            // Break out of parent color, apply tag color with hex support, then return to parent
+            const colorTag = `{/}{${color}-fg}{bold}${tag}{/bold}{/}{${parentColor}-fg}`;
+            processedLine = processedLine.replace(new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), colorTag);
+          }
+        }
+      } else if (this.eisenhowerTags) {
+        // For non-colored parent lines - use hex colors directly
+        for (const [tag, color] of Object.entries(this.eisenhowerTags)) {
+          if (line.includes(tag)) {
+            const colorTag = `{${color}-fg}{bold}${tag}{/bold}{/}`;
+            processedLine = processedLine.replace(new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), colorTag);
+          }
+        }
+      }
+
+      // Now apply line-level styling
+      if (line.match(/^##\s+/)) {
+        return `{cyan-fg}{bold}${processedLine}{/bold}{/cyan-fg}`;
+      }
+
       if (line.match(/^#\s+/)) {
-        return `{magenta-fg}{bold}${line}{/bold}{/magenta-fg}`;
+        return `{magenta-fg}{bold}${processedLine}{/bold}{/magenta-fg}`;
       }
-      
+
       if (line.match(/^\s*-\s+\[[ x]\]\s+/)) {
-        return `{green-fg}${line}{/green-fg}`;
+        return `{green-fg}${processedLine}{/green-fg}`;
       }
-      
+
       if (line.match(/^\s*-\s+/)) {
-        return `{yellow-fg}${line}{/yellow-fg}`;
+        return `{yellow-fg}${processedLine}{/yellow-fg}`;
       }
-      
+
       if (line.match(/^#\w+/)) {
-        return `{blue-fg}${line}{/blue-fg}`;
+        return `{blue-fg}${processedLine}{/blue-fg}`;
       }
-      
-      return line;
+
+      return processedLine;
     };
 
     const updateNotesDisplay = () => {
@@ -1284,24 +1335,40 @@ class ObsidianCLI {
     try {
       const tasks = await this.readTaskLog();
       const pendingTasks = tasks.filter(task => !task.completed);
-      
+
       if (pendingTasks.length === 0) {
         tasksDisplay.setContent('\nNo pending tasks!\n\nCreate some tasks in your daily note using [] prefix');
         return;
       }
 
       let content = '{cyan-fg}──────────────────────────────────────────────────{/cyan-fg}\n';
-      
+
       pendingTasks.forEach((task, index) => {
         const taskNum = `{yellow-fg}[${index + 1}]{/yellow-fg}`;
         const taskIcon = '{red-fg}○{/red-fg}';
-        const taskContent = `{white-fg}${task.content}{/white-fg}`;
+
+        // Apply Eisenhower tag styling to task content with hex color support
+        let styledTaskContent = task.content;
+        if (this.eisenhowerTags) {
+          for (const [tag, color] of Object.entries(this.eisenhowerTags)) {
+            if (task.content.includes(tag)) {
+              // Use hex colors directly - blessed supports them
+              const colorTag = `{/}{${color}-fg}{bold}${tag}{/bold}{/}{white-fg}`;
+              styledTaskContent = styledTaskContent.replace(
+                new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                colorTag
+              );
+            }
+          }
+        }
+
+        const taskContent = `{white-fg}${styledTaskContent}{/white-fg}`;
         const taskSource = `{gray-fg}(${task.sourceFile}){/gray-fg}`;
         content += `${taskNum} ${taskIcon} ${taskContent} ${taskSource}\n`;
       });
-      
+
       content += '\n{gray-fg}Tip: Type a number (1-' + pendingTasks.length + ') and press Enter to complete that task{/gray-fg}';
-      
+
       tasksDisplay.setContent(content);
     } catch (error) {
       tasksDisplay.setContent(`Error loading tasks: ${error.message}`);

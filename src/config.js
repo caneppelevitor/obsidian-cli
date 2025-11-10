@@ -64,13 +64,19 @@ class Config {
       interface: {
         theme: {
           border: 'cyan',
-          title: 'white', 
+          title: 'white',
           content: 'white',
           input: 'yellow',
           highlight: 'green'
         },
         autoScroll: true,
-        showLineNumbers: true
+        showLineNumbers: true,
+        eisenhowerTags: {
+          '#do': 'red',
+          '#delegate': 'yellow',
+          '#schedule': 'blue',
+          '#eliminate': 'gray'
+        }
       },
       organization: {
         sectionPrefixes: {
@@ -219,8 +225,27 @@ class Config {
   async getFullConfig() {
     const config = await this.loadConfig();
     const defaultConfig = this.getDefaultConfig();
-    
+
     return this.deepMerge(defaultConfig, config);
+  }
+
+  async getEisenhowerTags() {
+    try {
+      const config = await this.loadConfig();
+      return config.interface?.eisenhowerTags || {
+        '#do': '196',        // Bright red (256-color palette) - urgent & important
+        '#delegate': '214',  // Orange (256-color palette) - urgent & not important
+        '#schedule': '33',   // Bright blue (256-color palette) - not urgent & important
+        '#eliminate': '244'  // Gray (256-color palette) - not urgent & not important
+      };
+    } catch (error) {
+      return {
+        '#do': '196',
+        '#delegate': '214',
+        '#schedule': '33',
+        '#eliminate': '244'
+      };
+    }
   }
   
   deepMerge(target, source) {
@@ -247,5 +272,6 @@ module.exports = {
   getQuestionsLogFile: () => config.getQuestionsLogFile(),
   getInsightsLogFile: () => config.getInsightsLogFile(),
   getFullConfig: () => config.getFullConfig(),
+  getEisenhowerTags: () => config.getEisenhowerTags(),
   saveConfig: (configData) => config.saveConfig(configData)
 };
