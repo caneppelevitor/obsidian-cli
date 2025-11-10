@@ -72,10 +72,10 @@ class Config {
         autoScroll: true,
         showLineNumbers: true,
         eisenhowerTags: {
-          '#do': 'red',
-          '#delegate': 'yellow',
-          '#schedule': 'blue',
-          '#eliminate': 'gray'
+          '#do': '131',
+          '#delegate': '180',
+          '#schedule': '66',
+          '#eliminate': '145'
         }
       },
       organization: {
@@ -233,17 +233,17 @@ class Config {
     try {
       const config = await this.loadConfig();
       return config.interface?.eisenhowerTags || {
-        '#do': '196',        // Bright red (256-color palette) - urgent & important
-        '#delegate': '214',  // Orange (256-color palette) - urgent & not important
-        '#schedule': '33',   // Bright blue (256-color palette) - not urgent & important
-        '#eliminate': '244'  // Gray (256-color palette) - not urgent & not important
+        '#do': '131',        // Muted rose (matches Ghostty #cc9177) - urgent & important
+        '#delegate': '180',  // Warm tan (matches Ghostty #dbb094) - urgent & not important
+        '#schedule': '66',   // Sage blue-green (matches Ghostty #688994) - not urgent & important
+        '#eliminate': '145'  // Cool gray - not urgent & not important
       };
     } catch (error) {
       return {
-        '#do': '196',
-        '#delegate': '214',
-        '#schedule': '33',
-        '#eliminate': '244'
+        '#do': '131',
+        '#delegate': '180',
+        '#schedule': '66',
+        '#eliminate': '145'
       };
     }
   }
