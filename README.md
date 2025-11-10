@@ -1,56 +1,43 @@
 # Obsidian CLI
 
-A simple CLI tool for managing daily notes in your Obsidian vault, designed around my personal note-taking workflow with section-based organization.
+Terminal interface for managing daily notes in Obsidian with section-based organization and task logging.
 
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/91509a6b-9116-48d9-94ed-cdbc8189b285" />
 
-
-## Installation
+## Setup
 
 ```bash
 git clone <this-repo>
 cd obsidian-cli
 npm install
-npm install -g .  # For global access
+npm install -g .
+obsidian init  # Configure vault path
 ```
 
 ## Usage
 
 ```bash
-# First time setup
-npm start init
-
-# Open today's daily note
-npm start daily
+obsidian daily    # Open today's daily note
+obsidian config   # View/edit configuration
 ```
 
-## How It Works
+## Features
 
-This tool is built around my daily note-taking flow with predefined sections. Notes are organized with markdown headers (## Section Name) and content is automatically placed in the right section based on simple prefix commands.
-¡
-### Section Commands
+**Section Organization** - Content auto-routes to sections via prefixes:
+- `[] task` → Tasks section as checkbox
+- `- idea` → Ideas section as bullet
+- `? question` → Questions section as bullet
+- `! insight` → Insights section as bullet
 
-Use these prefixes to add content to specific sections:
+**Task Logging** - Tasks auto-log to centralized file with backlinks
 
-- `[] task description` → Adds to **Tasks** section as `- [ ] task description`
-- `- idea or note` → Adds to **Ideas** section as `- idea or note`
-- `? question here` → Adds to **Questions** section as `- question here`
-- `! insight or reflection` → Adds to **Insights** section as `- insight or reflection`
+**Eisenhower Tags** - Priority highlighting with colors:
+- `#do` (red) - Urgent & Important
+- `#delegate` (orange) - Urgent, Not Important
+- `#schedule` (blue) - Not Urgent, Important
+- `#eliminate` (gray) - Not Urgent, Not Important
 
-### Task Logging
-
-All tasks created with the `[]` prefix are automatically logged to a centralized task log file in addition to being added to your daily note. This creates a master list of all tasks across all daily notes.
-
-**Task Log Features:**
-- Includes a backlink to the daily note where it was created
-- Maintains a complete history of all tasks
-- Configurable log file location (default: `tasks-log.md` in vault root)
-
-### Interactive Mode
-
-- **Enter**: Submit input
-- **Ctrl+C**: Exit
-- `/save`: Save file
-- `/exit`: Exit
-
-The tool automatically finds the appropriate section header and inserts content there, or appends to the end if no matching section exists.
+**Interactive Controls:**
+- Enter: Submit
+- Ctrl+C: Exit
+- `/save`, `/exit`: Commands
