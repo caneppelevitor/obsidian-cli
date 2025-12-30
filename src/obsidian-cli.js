@@ -18,6 +18,13 @@ class ObsidianCLI {
     return new Date().toISOString().split('T')[0];
   }
 
+  getMonthFolder() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+  }
+
   async loadEisenhowerTags() {
     if (!this.eisenhowerTags) {
       this.eisenhowerTags = await config.getEisenhowerTags();
@@ -293,17 +300,27 @@ class ObsidianCLI {
   }
 
   getDailyNotePath() {
-    return path.join(this.vaultPath, this.getDailyNoteFilename());
+    const monthFolder = this.getMonthFolder();
+    return path.join(this.vaultPath, monthFolder, this.getDailyNoteFilename());
   }
 
   async openDailyNote() {
     const dailyNotePath = this.getDailyNotePath();
     const dailyNoteFilename = this.getDailyNoteFilename();
+    const monthFolder = this.getMonthFolder();
+    const monthFolderPath = path.join(this.vaultPath, monthFolder);
 
     try {
       await fs.access(this.vaultPath);
     } catch (error) {
       await fs.mkdir(this.vaultPath, { recursive: true });
+    }
+
+    try {
+      await fs.access(monthFolderPath);
+    } catch (error) {
+      await fs.mkdir(monthFolderPath, { recursive: true });
+      console.log(chalk.gray(`Created month folder: ${monthFolder}`));
     }
 
     try {
