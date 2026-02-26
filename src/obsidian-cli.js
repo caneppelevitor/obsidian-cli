@@ -740,7 +740,7 @@ class ObsidianCLI {
       top: 2,
       left: 1,
       width: '100%-2',
-      height: '80%-1',
+      height: '100%-6',
       border: {
         type: 'line'
       },
@@ -771,7 +771,7 @@ class ObsidianCLI {
       top: 2,
       left: 1,
       width: '100%-2',
-      height: '80%-1',
+      height: '100%-6',
       border: {
         type: 'line'
       },
@@ -811,23 +811,35 @@ class ObsidianCLI {
       }
     });
 
+    blessed.line({
+      parent: screen,
+      bottom: 3,
+      left: 0,
+      width: '100%',
+      orientation: 'horizontal',
+      style: { fg: 'cyan' }
+    });
+
+    blessed.line({
+      parent: screen,
+      bottom: 1,
+      left: 0,
+      width: '100%',
+      orientation: 'horizontal',
+      style: { fg: 'cyan' }
+    });
+
     const inputContainer = blessed.box({
       parent: screen,
-      top: '85%',
-      left: 1,
-      width: '100%-2',
-      height: '12%',
-      border: {
-        type: 'line'
-      },
-      style: {
-        fg: 'cyan'
-      }
+      bottom: 2,
+      left: 0,
+      width: '100%',
+      height: 1
     });
 
     blessed.text({
       parent: inputContainer,
-      top: 1,
+      top: 0,
       left: 1,
       width: 2,
       height: 1,
@@ -840,7 +852,7 @@ class ObsidianCLI {
 
     const inputBox = blessed.box({
       parent: inputContainer,
-      top: 1,
+      top: 0,
       left: 3,
       width: '100%-4',
       height: 1,
@@ -1107,14 +1119,12 @@ class ObsidianCLI {
     });
 
     inputBox.on('focus', () => {
-      inputContainer.style.border.fg = 'green';
       notesDisplay.style.border.fg = 'white';
       renderInput();
     });
 
     notesDisplay.on('focus', () => {
       notesDisplay.style.border.fg = 'green';
-      inputContainer.style.border.fg = 'white';
       screen.render();
     });
 
