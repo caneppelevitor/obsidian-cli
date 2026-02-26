@@ -13,7 +13,7 @@ program
   .name('obsidian-cli')
   .description('CLI tool for managing Obsidian vault with Claude Code-inspired interface')
   .version('1.0.0')
-  .action(async (options) => {
+  .action(async () => {
     const config = require('./config');
     const vaultPath = await config.getVaultPath();
     if (!vaultPath) {

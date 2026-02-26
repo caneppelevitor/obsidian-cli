@@ -798,7 +798,7 @@ class ObsidianCLI {
       hidden: true
     });
 
-    const statusLine = blessed.text({
+    blessed.text({
       parent: screen,
       top: 0,
       left: 0,
@@ -825,7 +825,7 @@ class ObsidianCLI {
       }
     });
 
-    const promptSymbol = blessed.text({
+    blessed.text({
       parent: inputContainer,
       top: 1,
       left: 1,
@@ -993,7 +993,6 @@ class ObsidianCLI {
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);
         
         if (this.lastInsertedLine) {
-          const totalLines = lines.length;
           const displayHeight = notesDisplay.height - 2;
           
           const currentScrollTop = notesDisplay.getScroll();
