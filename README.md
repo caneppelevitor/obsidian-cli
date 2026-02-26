@@ -13,7 +13,20 @@ git clone <this-repo>
 cd obsidian-cli
 npm install
 npm install -g .
-obsidian init  # Configure vault path
+```
+
+Then point it to your Obsidian vault:
+
+```bash
+obsidian init --vault /path/to/your/vault
+```
+
+Or run `obsidian init` without flags for an interactive prompt.
+
+**Tip:** Add a tmux shortcut to open it instantly:
+```bash
+# ~/.tmux.conf
+bind-key -r o new-window "obsidian"
 ```
 
 ## Usage
