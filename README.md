@@ -52,8 +52,3 @@ obsidian config   # View/edit configuration
 - `#delegate` (orange) - Urgent, Not Important
 - `#schedule` (blue) - Not Urgent, Important
 - `#eliminate` (gray) - Not Urgent, Not Important
-
-**Interactive Controls:**
-- Enter: Submit
-- Ctrl+C: Exit
-- `/save`, `/exit`: Commands
