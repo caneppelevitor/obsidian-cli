@@ -240,13 +240,14 @@ describe('ObsidianCLI', () => {
   test('should render tab bar with active tab highlighted', () => {
     const tabs = ['Daily Note', 'Tasks'];
     const result0 = cli.renderTabBar(tabs, 0);
-    expect(result0).toContain('{inverse} Daily Note {/inverse}');
-    expect(result0).toContain(' Tasks ');
-    expect(result0).not.toContain('{inverse} Tasks {/inverse}');
+    expect(result0).toContain('● Daily Note');
+    expect(result0).toContain('{bold}');
+    expect(result0).not.toContain('● Tasks');
 
     const result1 = cli.renderTabBar(tabs, 1);
-    expect(result1).toContain(' Daily Note ');
-    expect(result1).toContain('{inverse} Tasks {/inverse}');
+    expect(result1).toContain('● Tasks');
+    expect(result1).not.toContain('● Daily Note');
+    expect(result1).toContain('{gray-fg}|{/gray-fg}');
   });
 
   test('should create month folder and daily note via openDailyNote', async () => {

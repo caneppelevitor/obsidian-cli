@@ -798,13 +798,14 @@ class ObsidianCLI {
       hidden: true
     });
 
-    blessed.text({
+    const statusBar = blessed.text({
       parent: screen,
       top: 0,
       left: 0,
       width: '100%',
       height: 1,
-      content: ' Obsidian CLI - Press Tab to navigate | Ctrl+C to exit | Type to add content | Use /commands for actions',
+      content: '',
+      tags: true,
       style: {
         fg: 'white',
         inverse: true
@@ -999,8 +1000,28 @@ class ObsidianCLI {
         const numberedLines = lines.map((line, index) => {
           const lineNum = (index + 1).toString().padStart(3, ' ');
           const styledLine = styleLineContent(line);
-          return `${lineNum} │ ${styledLine}`;
+          return `{gray-fg}${lineNum} │{/gray-fg} ${styledLine}`;
         });
+        const displayHeight = notesDisplay.height - 2;
+        const spareLines = displayHeight - numberedLines.length;
+        if (spareLines >= 8) {
+          const cheatSheet = [
+            '',
+            '{gray-fg}  Quick Reference:{/gray-fg}',
+            '{gray-fg}    []  text   →  Tasks{/gray-fg}',
+            '{gray-fg}    -   text   →  Ideas{/gray-fg}',
+            '{gray-fg}    ?   text   →  Questions{/gray-fg}',
+            '{gray-fg}    !   text   →  Insights{/gray-fg}',
+            '{gray-fg}    /help      →  Show commands{/gray-fg}',
+            '{gray-fg}    /save      →  Save file{/gray-fg}',
+          ];
+          const blankLines = spareLines - cheatSheet.length;
+          for (let i = 0; i < blankLines; i++) {
+            numberedLines.push('');
+          }
+          numberedLines.push(...cheatSheet);
+        }
+
         notesDisplay.setContent(numberedLines.join('\n'));
         notesDisplay.setLabel(` ${path.basename(this.currentFile || 'No file')} `);
         
@@ -1027,6 +1048,26 @@ class ObsidianCLI {
       screen.render();
     };
 
+    const updateStatusBar = async (tab) => {
+      if (tab === 0) {
+        const words = this.currentContent ? this.currentContent.split(/\s+/).filter(w => w.length > 0).length : 0;
+        const sections = this.currentContent ? (this.currentContent.match(/^## /gm) || []).length : 0;
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        statusBar.setContent(` Daily Note | ${words} words | ${sections} sections | Last edit: ${timeStr}`);
+      } else if (tab === 1) {
+        try {
+          const tasks = await this.readTaskLog();
+          const pending = tasks.filter(t => !t.completed).length;
+          const completed = tasks.filter(t => t.completed).length;
+          const total = tasks.length;
+          statusBar.setContent(` Tasks | ${pending} pending | ${completed} completed | ${total} total`);
+        } catch {
+          statusBar.setContent(' Tasks');
+        }
+      }
+      screen.render();
+    };
 
     let lastProcessedTime = 0;
     screen.on('keypress', async (ch, key) => {
@@ -1046,6 +1087,7 @@ class ObsidianCLI {
           if (inputBuffer.trim()) {
             const success = await this.processInput(inputBuffer, currentTab, tasksDisplay);
             if (success === 'task_completed') {
+              await updateStatusBar(currentTab);
               clearInput();
               return;
             } else if (success === 'invalid_task_number') {
@@ -1053,6 +1095,7 @@ class ObsidianCLI {
               return;
             } else if (success !== false) {
               updateNotesDisplay();
+              await updateStatusBar(currentTab);
             }
           }
           clearInput();
@@ -1109,6 +1152,7 @@ class ObsidianCLI {
       currentTab = (currentTab + 1) % tabs.length;
       tabBar.setContent(this.renderTabBar(tabs, currentTab));
       await this.switchTab(currentTab, notesDisplay, tasksDisplay);
+      await updateStatusBar(currentTab);
       screen.render();
     });
 
@@ -1137,6 +1181,7 @@ class ObsidianCLI {
     renderInput();
 
     updateNotesDisplay();
+    updateStatusBar(currentTab);
     screen.render();
 
     return screen;
@@ -1339,11 +1384,11 @@ class ObsidianCLI {
   renderTabBar(tabs, activeTab) {
     return tabs.map((tab, index) => {
       if (index === activeTab) {
-        return `{inverse} ${tab} {/inverse}`;
+        return `{bold}{white-fg} ● ${tab} {/white-fg}{/bold}`;
       } else {
-        return ` ${tab} `;
+        return `{gray-fg} ${tab} {/gray-fg}`;
       }
-    }).join('');
+    }).join('{gray-fg}|{/gray-fg}');
   }
 
   async switchTab(tabIndex, notesDisplay, tasksDisplay) {
@@ -1361,24 +1406,41 @@ class ObsidianCLI {
     try {
       const tasks = await this.readTaskLog();
       const pendingTasks = tasks.filter(task => !task.completed);
+      const completedTasks = tasks.filter(task => task.completed);
 
       if (pendingTasks.length === 0) {
         tasksDisplay.setContent('\nNo pending tasks!\n\nCreate some tasks in your daily note using [] prefix');
         return;
       }
 
-      let content = '{cyan-fg}──────────────────────────────────────────────────{/cyan-fg}\n';
+      // Task progress summary
+      let content = ` {bold}{white-fg}${pendingTasks.length} pending{/white-fg}{/bold} | {green-fg}${completedTasks.length} completed{/green-fg} | {gray-fg}${tasks.length} total{/gray-fg}\n`;
+      content += '{cyan-fg}──────────────────────────────────────────────────{/cyan-fg}\n';
+
+      // Group tasks by Eisenhower tag
+      const eisenhowerTagNames = ['#do', '#delegate', '#schedule', '#eliminate'];
+      const groups = {};
+      const untagged = [];
 
       pendingTasks.forEach((task, index) => {
-        const taskNum = `{yellow-fg}[${index + 1}]{/yellow-fg}`;
+        task._displayIndex = index;
+        const matchedTag = eisenhowerTagNames.find(tag => task.content.includes(tag));
+        if (matchedTag) {
+          if (!groups[matchedTag]) groups[matchedTag] = [];
+          groups[matchedTag].push(task);
+        } else {
+          untagged.push(task);
+        }
+      });
+
+      const renderTask = (task) => {
+        const taskNum = `{yellow-fg}[${task._displayIndex + 1}]{/yellow-fg}`;
         const taskIcon = '{red-fg}○{/red-fg}';
 
-        // Apply Eisenhower tag styling to task content with hex color support
         let styledTaskContent = task.content;
         if (this.eisenhowerTags) {
           for (const [tag, color] of Object.entries(this.eisenhowerTags)) {
             if (task.content.includes(tag)) {
-              // Use hex colors directly - blessed supports them
               const colorTag = `{/}{${color}-fg}{bold}${tag}{/bold}{/}{white-fg}`;
               styledTaskContent = styledTaskContent.replace(
                 new RegExp(tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
@@ -1390,8 +1452,27 @@ class ObsidianCLI {
 
         const taskContent = `{white-fg}${styledTaskContent}{/white-fg}`;
         const taskSource = `{gray-fg}(${task.sourceFile}){/gray-fg}`;
-        content += `${taskNum} ${taskIcon} ${taskContent} ${taskSource}\n`;
-      });
+        return `  ${taskNum} ${taskIcon} ${taskContent} ${taskSource}\n`;
+      };
+
+      // Render groups in Eisenhower order
+      for (const tag of eisenhowerTagNames) {
+        if (groups[tag] && groups[tag].length > 0) {
+          const color = (this.eisenhowerTags && this.eisenhowerTags[tag]) || 'white';
+          content += `\n{${color}-fg}{bold}${tag} (${groups[tag].length}){/bold}{/${color}-fg}\n`;
+          for (const task of groups[tag]) {
+            content += renderTask(task);
+          }
+        }
+      }
+
+      // Render untagged tasks last
+      if (untagged.length > 0) {
+        content += `\n{gray-fg}{bold}Untagged (${untagged.length}){/bold}{/gray-fg}\n`;
+        for (const task of untagged) {
+          content += renderTask(task);
+        }
+      }
 
       content += '\n{gray-fg}Tip: Type a number (1-' + pendingTasks.length + ') and press Enter to complete that task{/gray-fg}';
 
