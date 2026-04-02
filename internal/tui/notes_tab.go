@@ -232,14 +232,14 @@ func (m *AppModel) exitEditMode() tea.Cmd {
 	return saveFileCmd(m.currentFile, m.fileContent)
 }
 
-// renderEditModeIndicator returns the edit mode label for the border.
+// renderEditModeIndicator returns the edit mode label.
 func renderEditModeIndicator() string {
 	return lipgloss.NewStyle().
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("15")).
+		Background(colorBlue).
+		Foreground(colorBase).
 		Bold(true).
 		Padding(0, 1).
-		Render(" EDITING ")
+		Render("EDITING")
 }
 
 const helpText = `

@@ -70,7 +70,7 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 	h.ShowAll = false
 
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	s.Style = lipgloss.NewStyle().Foreground(colorCyan)
+	s.Style = lipgloss.NewStyle().Foreground(colorBlue)
 
 	ed := textarea.New()
 	ed.Prompt = "│ "
@@ -420,34 +420,39 @@ func (m AppModel) View() tea.View {
 	tabs := []string{"Daily Note", "Tasks", "Files"}
 	tabBar := RenderTabBar(tabs, m.activeTab, m.width)
 
-	// Main content area
+	// Main content area with active/inactive borders
 	var mainContent string
 	switch {
 	case m.activeTab == tabNotes && m.editMode:
-		editBorder := lipgloss.NewStyle().
+		title := BorderWithTitle("EDITING: "+filepath.Base(m.currentFile), m.width-2, true)
+		body := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			Width(m.width - 2)
-		mainContent = editBorder.Render(m.editor.View())
+			BorderTop(false).
+			BorderForeground(colorBlue).
+			Width(m.width - 2).
+			Render(m.editor.View())
+		mainContent = title + "\n" + body
 	case m.activeTab == tabFiles && m.fileListReady:
 		mainContent = m.fileList.View()
 	default:
-		mainContent = borderStyle.
+		border := activeBorderStyle
+		if m.activeTab != tabNotes && m.activeTab != tabTasks {
+			border = inactiveBorderStyle
+		}
+		mainContent = border.
 			Width(m.width - 2).
 			Render(m.viewport.View())
 	}
 
 	// Status bar
-	statusContent := m.buildStatusBar()
-	statusBar := statusBarStyle.Width(m.width).Render(statusContent)
+	statusBar := m.buildStatusBar()
 
 	var result string
 	if m.activeTab == tabNotes && !m.editMode {
-		// Notes view mode: includes quick input line
-		sep := lipgloss.NewStyle().
-			Foreground(colorGray).
-			Render(strings.Repeat("─", m.width))
-		inputLine := inputPromptStyle.Render(" > ") + m.input.View()
+		// Notes view mode: input line with mode pill
+		sep := separatorStyle.Render(strings.Repeat("─", m.width))
+		modePill := DetectInputMode(m.input.Value())
+		inputLine := " " + modePill + " " + inputPromptStyle.Render("> ") + m.input.View()
 		result = lipgloss.JoinVertical(lipgloss.Left,
 			tabBar,
 			mainContent,
@@ -456,16 +461,14 @@ func (m AppModel) View() tea.View {
 			statusBar,
 		)
 	} else if m.editMode {
-		// Edit mode: editor fills the space, no input bar
-		editIndicator := renderEditModeIndicator()
-		editStatus := statusBarStyle.Width(m.width).Render(" " + editIndicator + "  esc save & exit · ctrl+s save · ctrl+c quit")
+		editStatus := statusBarStyle.Width(m.width).Render(
+			" " + renderEditModeIndicator() + "  esc save & exit · ctrl+s save · ctrl+c quit")
 		result = lipgloss.JoinVertical(lipgloss.Left,
 			tabBar,
 			mainContent,
 			editStatus,
 		)
 	} else {
-		// Tasks/Files tabs: no input line
 		result = lipgloss.JoinVertical(lipgloss.Left,
 			tabBar,
 			mainContent,
@@ -513,23 +516,39 @@ func (m AppModel) buildStatusBar() string {
 		prefix = m.spinner.View() + " "
 	}
 
+	var left, right string
+
 	if m.statusText != "" {
-		return prefix + m.statusText
+		left = prefix + m.statusText
+	} else {
+		switch m.activeTab {
+		case tabNotes:
+			words := len(regexp.MustCompile(`\S+`).FindAllString(m.fileContent, -1))
+			sections := len(regexp.MustCompile(`(?m)^## `).FindAllString(m.fileContent, -1))
+			filename := filepath.Base(m.currentFile)
+			left = fmt.Sprintf("%s %s  %d words  %d sections", prefix, filename, words, sections)
+			right = "e edit · tab switch · /help "
+		case tabTasks:
+			left = prefix + " j/k navigate · Enter complete"
+			right = "tab switch "
+		case tabFiles:
+			left = prefix + " Type to filter · Enter open"
+			right = "tab switch "
+		default:
+			left = prefix
+		}
 	}
 
-	switch m.activeTab {
-	case tabNotes:
-		words := len(regexp.MustCompile(`\S+`).FindAllString(m.fileContent, -1))
-		sections := len(regexp.MustCompile(`(?m)^## `).FindAllString(m.fileContent, -1))
-		filename := filepath.Base(m.currentFile)
-		return fmt.Sprintf("%s %s | %d words | %d sections", prefix, filename, words, sections)
-	case tabTasks:
-		return prefix + " j/k navigate · Enter complete · tab switch"
-	case tabFiles:
-		return prefix + " Files | Type to filter, Enter to open"
-	default:
-		return prefix
+	leftRendered := statusBarStyle.Render(left)
+	rightRendered := statusBarDimStyle.Render(right)
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 0 {
+		gap = 0
 	}
+	filler := statusBarStyle.Render(strings.Repeat(" ", gap))
+
+	return leftRendered + filler + rightRendered
 }
 
 // Run starts the TUI application.

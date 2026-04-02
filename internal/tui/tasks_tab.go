@@ -16,26 +16,32 @@ func (m AppModel) renderTasksContent() string {
 	completed := filterCompleted(m.tasks)
 
 	if len(pending) == 0 {
-		return "\n  No pending tasks!\n\n  Create some tasks in your daily note using [] prefix"
+		return RenderEmptyState(
+			"No pending tasks",
+			"Add tasks in your daily note using [] prefix\nor press Tab to switch to Daily Note",
+			m.width-4,
+			m.viewport.Height(),
+		)
 	}
 
 	var sb strings.Builder
 
 	// Summary line
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Render(
-		fmt.Sprintf(" %d pending", len(pending))))
-	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(" | "))
-	sb.WriteString(lipgloss.NewStyle().Foreground(colorGreen).Render(
-		fmt.Sprintf("%d completed", len(completed))))
-	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(" | "))
-	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(
-		fmt.Sprintf("%d total\n", len(m.tasks))))
+	pendingStyle := lipgloss.NewStyle().Bold(true).Foreground(colorText)
+	doneStyle := lipgloss.NewStyle().Foreground(colorGreen)
+	totalStyle := lipgloss.NewStyle().Foreground(colorOverlay)
 
-	// Tag legend
+	sb.WriteString(" " + pendingStyle.Render(fmt.Sprintf("%d pending", len(pending))))
+	sb.WriteString("  ")
+	sb.WriteString(doneStyle.Render(fmt.Sprintf("%d done", len(completed))))
+	sb.WriteString("  ")
+	sb.WriteString(totalStyle.Render(fmt.Sprintf("%d total", len(m.tasks))))
+
+	// Tag legend — right side
 	tagOrder := []string{"#do", "#delegate", "#schedule", "#eliminate"}
 	var legendParts []string
 	for _, tag := range tagOrder {
-		colorCode, ok := m.eisenhowerTags[tag]
+		dc, ok := eisenhowerDisplayColors[tag]
 		if !ok {
 			continue
 		}
@@ -47,64 +53,92 @@ func (m AppModel) renderTasksContent() string {
 		}
 		if count > 0 {
 			tagStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorCode)).
+				Foreground(dc).
 				Bold(true)
 			legendParts = append(legendParts, tagStyle.Render(fmt.Sprintf("%s(%d)", tag, count)))
 		}
 	}
 	if len(legendParts) > 0 {
-		sb.WriteString(" " + strings.Join(legendParts, "  ") + "\n")
+		legend := strings.Join(legendParts, " ")
+		summaryWidth := lipgloss.Width(sb.String())
+		legendWidth := lipgloss.Width(legend)
+		gap := m.width - 6 - summaryWidth - legendWidth
+		if gap < 2 {
+			gap = 2
+		}
+		sb.WriteString(strings.Repeat(" ", gap))
+		sb.WriteString(legend)
 	}
+	sb.WriteString("\n")
 
-	sb.WriteString(lipgloss.NewStyle().Foreground(colorCyan).Render(strings.Repeat("─", m.width-6)) + "\n")
+	// Divider
+	sb.WriteString(dimStyle.Render(" " + strings.Repeat("─", m.width-6)) + "\n")
 
-	// Render each task with colored tags
+	// Calculate column widths
+	sourceWidth := 10
+	taskWidth := m.width - 14 - sourceWidth // num(4) + icon(3) + padding + source
+
+	// Render each task
 	for i, task := range pending {
 		isSelected := i == m.taskCursor
 
-		numStr := fmt.Sprintf("%2d", i+1)
-		icon := "○"
-		source := task.SourceFile
-
-		// Apply Eisenhower tag colors to content
+		// Task content with Eisenhower tag colors
 		content := task.Content
-		for tag, colorCode := range m.eisenhowerTags {
+		for tag := range m.eisenhowerTags {
 			if strings.Contains(content, tag) {
+				dc, ok := eisenhowerDisplayColors[tag]
+				if !ok {
+					dc = colorOverlay
+				}
 				tagStyle := lipgloss.NewStyle().
-					Foreground(lipgloss.Color(colorCode)).
+					Foreground(dc).
 					Bold(true)
 				content = strings.ReplaceAll(content, tag, tagStyle.Render(tag))
 			}
 		}
 
+		// Truncate content if too long
+		if lipgloss.Width(content) > taskWidth {
+			// Simple truncation (keeps ANSI codes intact enough)
+			content = content[:taskWidth-1] + "…"
+		}
+
+		// Source (just the date part, trimmed)
+		source := task.SourceFile
+		if len(source) > sourceWidth {
+			source = source[:sourceWidth]
+		}
+
+		numStr := fmt.Sprintf(" %2d", i+1)
+		icon := " ○ "
+		sourceStr := lipgloss.NewStyle().
+			Foreground(colorOverlay).
+			Render(fmt.Sprintf("%*s", sourceWidth, source))
+
 		if isSelected {
-			// Highlighted row
-			selStyle := lipgloss.NewStyle().
-				Background(lipgloss.Color("62")).
-				Foreground(lipgloss.Color("15")).
-				Bold(true)
-			numRendered := selStyle.Render(numStr)
-			iconRendered := selStyle.Render(" " + icon + " ")
+			// Selected row: accent marker + subtle background
+			marker := lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Bold(true).
+				Render("▸")
+			numRendered := lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Bold(true).
+				Render(numStr)
+			iconRendered := lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Render(icon)
 
-			// For selected row, we still want tag colors to show
-			sourceRendered := lipgloss.NewStyle().
-				Foreground(colorGray).
-				Render(fmt.Sprintf(" (%s)", source))
-
-			sb.WriteString(fmt.Sprintf(" %s%s %s%s\n", numRendered, iconRendered, content, sourceRendered))
+			sb.WriteString(fmt.Sprintf("%s%s%s%s  %s\n",
+				marker, numRendered, iconRendered, content, sourceStr))
 		} else {
-			numRendered := lipgloss.NewStyle().Foreground(colorGray).Render(numStr)
-			iconRendered := lipgloss.NewStyle().Foreground(colorRed).Render(" " + icon + " ")
-			sourceRendered := lipgloss.NewStyle().Foreground(colorGray).
-				Render(fmt.Sprintf(" (%s)", source))
+			numRendered := lipgloss.NewStyle().Foreground(colorOverlay).Render(numStr)
+			iconRendered := lipgloss.NewStyle().Foreground(colorOverlay).Render(icon)
 
-			sb.WriteString(fmt.Sprintf(" %s%s %s%s\n", numRendered, iconRendered, content, sourceRendered))
+			sb.WriteString(fmt.Sprintf(" %s%s%s  %s\n",
+				numRendered, iconRendered, content, sourceStr))
 		}
 	}
-
-	sb.WriteString("\n")
-	sb.WriteString(cheatSheetStyle.Render(
-		fmt.Sprintf("  j/k navigate · Enter complete · %d tasks", len(pending))))
 
 	return sb.String()
 }
@@ -142,7 +176,6 @@ func (m *AppModel) handleTaskCompletion(num int) tea.Cmd {
 	return nil
 }
 
-// moveTaskCursor moves the cursor up or down.
 func (m *AppModel) moveTaskCursor(delta int) {
 	pending := filterPending(m.tasks)
 	if len(pending) == 0 {
