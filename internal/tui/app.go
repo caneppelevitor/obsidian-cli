@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
@@ -28,6 +31,9 @@ type AppModel struct {
 	// Sub-models
 	input    textinput.Model
 	viewport viewport.Model
+	help     help.Model
+	spinner  spinner.Model
+	keys     KeyMap
 
 	// State
 	activeTab      int
@@ -38,6 +44,7 @@ type AppModel struct {
 	eisenhowerTags map[string]string
 	tasks          []tasks.Task
 	statusText     string
+	loading        bool
 
 	// Layout
 	width, height int
@@ -53,8 +60,17 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 
 	tags, _ := config.GetEisenhowerTags()
 
+	h := help.New()
+	h.ShowAll = false
+
+	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	s.Style = lipgloss.NewStyle().Foreground(colorCyan)
+
 	return AppModel{
 		input:          ti,
+		help:           h,
+		spinner:        s,
+		keys:           DefaultKeyMap(),
 		activeTab:      tabNotes,
 		vaultPath:      vaultPath,
 		currentFile:    filePath,
@@ -65,8 +81,10 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 }
 
 func (m AppModel) Init() tea.Cmd {
+	m.loading = true
 	return tea.Batch(
 		loadTasksCmd(m.vaultPath),
+		m.spinner.Tick,
 	)
 }
 
@@ -77,8 +95,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.help.SetWidth(msg.Width)
 
-		viewportHeight := m.height - 5
+		viewportHeight := m.height - 6 // tab + border viewport + sep + input + help/status
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		}
@@ -97,46 +116,74 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 
-		case "tab":
+		case key.Matches(msg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
+			return m, nil
+
+		case key.Matches(msg, m.keys.Tab):
 			m.activeTab = (m.activeTab + 1) % 2
 			m.viewport.SetContent(m.renderContent())
 			if m.activeTab == tabTasks {
-				cmds = append(cmds, loadTasksCmd(m.vaultPath))
+				m.loading = true
+				cmds = append(cmds, loadTasksCmd(m.vaultPath), m.spinner.Tick)
 			}
 			return m, tea.Batch(cmds...)
 
-		case "enter":
+		case key.Matches(msg, m.keys.Submit):
 			value := m.input.Value()
 			if strings.TrimSpace(value) != "" {
 				cmd := m.handleInput(value)
 				if cmd != nil {
-					cmds = append(cmds, cmd)
+					m.loading = true
+					cmds = append(cmds, cmd, m.spinner.Tick)
 				}
 			}
 			m.input.Reset()
 			m.viewport.SetContent(m.renderContent())
 			return m, tea.Batch(cmds...)
 
-		case "escape":
+		case key.Matches(msg, m.keys.Clear):
 			m.input.Reset()
 			return m, nil
 		}
 
+	case tea.MouseClickMsg:
+		// Tab switching by clicking on tab bar (first line)
+		if msg.Y == 0 {
+			// Rough calculation: "● Daily Note" is ~14 chars, "|" separator, "Tasks"
+			if msg.X < 16 {
+				m.activeTab = tabNotes
+			} else {
+				m.activeTab = tabTasks
+				m.loading = true
+				cmds = append(cmds, loadTasksCmd(m.vaultPath), m.spinner.Tick)
+			}
+			m.viewport.SetContent(m.renderContent())
+			return m, tea.Batch(cmds...)
+		}
+
+	case spinner.TickMsg:
+		if m.loading {
+			var spinCmd tea.Cmd
+			m.spinner, spinCmd = m.spinner.Update(msg)
+			cmds = append(cmds, spinCmd)
+		}
+
 	case SavedMsg:
+		m.loading = false
 		if msg.Err != nil {
 			m.statusText = fmt.Sprintf("Error saving: %v", msg.Err)
 		} else {
-			// Auto-scroll to inserted line after save
+			m.statusText = ""
 			if m.lastInserted > 0 {
 				vpHeight := m.viewport.Height()
 				yOffset := m.viewport.YOffset()
 				insertedIdx := m.lastInserted - 1
 
-				// Scroll if inserted line is outside visible area
 				if insertedIdx < yOffset || insertedIdx >= yOffset+vpHeight {
 					target := insertedIdx - vpHeight/2
 					if target < 0 {
@@ -150,6 +197,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case FileLoadedMsg:
+		m.loading = false
 		if msg.Err == nil {
 			m.currentFile = msg.Path
 			m.fileContent = msg.Content
@@ -157,6 +205,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case TasksLoadedMsg:
+		m.loading = false
 		if msg.Err == nil {
 			m.tasks = msg.Tasks
 			if m.activeTab == tabTasks {
@@ -166,8 +215,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TaskCompletedMsg:
 		if msg.Err == nil {
-			cmds = append(cmds, loadTasksCmd(m.vaultPath))
+			m.loading = true
+			cmds = append(cmds, loadTasksCmd(m.vaultPath), m.spinner.Tick)
 		} else {
+			m.loading = false
 			m.statusText = fmt.Sprintf("Error: %v", msg.Err)
 		}
 
@@ -175,6 +226,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Silent
 
 	case FileListMsg:
+		m.loading = false
 		if len(msg.Files) == 0 {
 			m.statusText = "No markdown files found"
 		} else {
@@ -227,9 +279,12 @@ func (m AppModel) View() tea.View {
 	// Input line
 	inputLine := inputPromptStyle.Render("> ") + m.input.View()
 
-	// Status bar
+	// Status bar with spinner or info
 	statusContent := m.buildStatusBar()
 	statusBar := statusBarStyle.Width(m.width).Render(statusContent)
+
+	// Help bar
+	helpBar := m.help.View(m.keys)
 
 	// Separator
 	sep := separatorStyle.Render(strings.Repeat("─", m.width))
@@ -240,10 +295,13 @@ func (m AppModel) View() tea.View {
 		sep,
 		inputLine,
 		statusBar,
+		helpBar,
 	)
 
 	v := tea.NewView(result)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	v.WindowTitle = "Obsidian: " + filepath.Base(m.currentFile)
 	return v
 }
 
@@ -355,7 +413,6 @@ func (m *AppModel) handleOpenFile(target string) tea.Cmd {
 		if num, parseErr := strconv.Atoi(target); parseErr == nil && num > 0 && num <= len(files) {
 			filename = files[num-1]
 		} else {
-			// Search by name
 			for _, f := range files {
 				if f == target || strings.Contains(f, target) {
 					filename = f
@@ -513,17 +570,26 @@ func (m AppModel) renderTask(it indexedTask) string {
 }
 
 func (m AppModel) buildStatusBar() string {
+	prefix := ""
+	if m.loading {
+		prefix = m.spinner.View() + " "
+	}
+
+	if m.statusText != "" {
+		return prefix + m.statusText
+	}
+
 	if m.activeTab == tabNotes {
 		words := len(regexp.MustCompile(`\S+`).FindAllString(m.fileContent, -1))
 		sections := len(regexp.MustCompile(`(?m)^## `).FindAllString(m.fileContent, -1))
 		filename := filepath.Base(m.currentFile)
-		return fmt.Sprintf(" %s | %d words | %d sections", filename, words, sections)
+		return fmt.Sprintf("%s %s | %d words | %d sections", prefix, filename, words, sections)
 	}
 
 	pending := len(filterPending(m.tasks))
 	completed := len(filterCompleted(m.tasks))
 	total := len(m.tasks)
-	return fmt.Sprintf(" Tasks | %d pending | %d completed | %d total", pending, completed, total)
+	return fmt.Sprintf("%s Tasks | %d pending | %d completed | %d total", prefix, pending, completed, total)
 }
 
 func filterPending(taskList []tasks.Task) []tasks.Task {
