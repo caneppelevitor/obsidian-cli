@@ -60,7 +60,7 @@ type AppModel struct {
 // NewApp creates a new application model.
 func NewApp(vaultPath, filePath, fileContent string) AppModel {
 	ti := textinput.New()
-	ti.Prompt = "> "
+	ti.Prompt = ""
 	ti.Focus()
 	ti.CharLimit = 500
 
@@ -109,7 +109,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.SetWidth(msg.Width)
 
-		viewportHeight := m.height - 6
+		viewportHeight := m.height - 5 // tab bar + border(2) + sep/input + status
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		}
@@ -441,21 +441,19 @@ func (m AppModel) View() tea.View {
 	statusContent := m.buildStatusBar()
 	statusBar := statusBarStyle.Width(m.width).Render(statusContent)
 
-	// Help bar
-	helpBar := m.help.View(m.keys)
-
 	var result string
 	if m.activeTab == tabNotes && !m.editMode {
 		// Notes view mode: includes quick input line
-		sep := separatorStyle.Render(strings.Repeat("─", m.width))
-		inputLine := inputPromptStyle.Render("> ") + m.input.View()
+		sep := lipgloss.NewStyle().
+			Foreground(colorGray).
+			Render(strings.Repeat("─", m.width))
+		inputLine := inputPromptStyle.Render(" > ") + m.input.View()
 		result = lipgloss.JoinVertical(lipgloss.Left,
 			tabBar,
 			mainContent,
 			sep,
 			inputLine,
 			statusBar,
-			helpBar,
 		)
 	} else if m.editMode {
 		// Edit mode: editor fills the space, no input bar
@@ -472,7 +470,6 @@ func (m AppModel) View() tea.View {
 			tabBar,
 			mainContent,
 			statusBar,
-			helpBar,
 		)
 	}
 
@@ -527,10 +524,7 @@ func (m AppModel) buildStatusBar() string {
 		filename := filepath.Base(m.currentFile)
 		return fmt.Sprintf("%s %s | %d words | %d sections", prefix, filename, words, sections)
 	case tabTasks:
-		pending := len(filterPending(m.tasks))
-		completed := len(filterCompleted(m.tasks))
-		total := len(m.tasks)
-		return fmt.Sprintf("%s Tasks | %d pending | %d completed | %d total | j/k navigate, Enter complete", prefix, pending, completed, total)
+		return prefix + " j/k navigate · Enter complete · tab switch"
 	case tabFiles:
 		return prefix + " Files | Type to filter, Enter to open"
 	default:

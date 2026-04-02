@@ -20,6 +20,9 @@ func (m AppModel) renderNotesView() string {
 		return "File is empty"
 	}
 
+	// Strip YAML frontmatter from display
+	displayContent := stripFrontmatter(m.fileContent)
+
 	width := m.width - 6
 	if width < 40 {
 		width = 40
@@ -35,12 +38,40 @@ func (m AppModel) renderNotesView() string {
 		return m.renderNotesFallback()
 	}
 
-	rendered, err := renderer.Render(m.fileContent)
+	rendered, err := renderer.Render(displayContent)
 	if err != nil {
 		return m.renderNotesFallback()
 	}
 
 	return rendered
+}
+
+// stripFrontmatter removes YAML frontmatter (--- blocks) from content for display.
+func stripFrontmatter(content string) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	inFrontmatter := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "---" {
+			if !inFrontmatter && i < 5 {
+				// Start of frontmatter (must be near top)
+				inFrontmatter = true
+				continue
+			} else if inFrontmatter {
+				// End of frontmatter
+				inFrontmatter = false
+				continue
+			}
+		}
+		if inFrontmatter {
+			continue
+		}
+		result = append(result, line)
+	}
+
+	return strings.Join(result, "\n")
 }
 
 // renderNotesFallback renders with manual line-by-line styling (used if Glamour fails).
