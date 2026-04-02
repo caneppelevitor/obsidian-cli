@@ -5,73 +5,13 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/bubbles/v2/table"
 	"charm.land/lipgloss/v2"
 
 	"github.com/caneppelevitor/obsidian-cli/internal/tasks"
 )
 
-// buildTaskTable creates a table.Model from the current task list.
-func (m *AppModel) buildTaskTable() {
-	pending := filterPending(m.tasks)
-
-	columns := []table.Column{
-		{Title: "#", Width: 4},
-		{Title: "Status", Width: 3},
-		{Title: "Task", Width: max(m.width-38, 20)},
-		{Title: "Source", Width: 12},
-		{Title: "Tag", Width: 12},
-	}
-
-	rows := make([]table.Row, len(pending))
-	for i, t := range pending {
-		tag := extractEisenhowerTag(t.Content)
-		content := t.Content
-		// Strip the tag from content to avoid duplication
-		if tag != "" {
-			content = strings.ReplaceAll(content, tag, "")
-			content = strings.TrimSpace(content)
-		}
-		rows[i] = table.Row{
-			fmt.Sprintf("%d", i+1),
-			"○",
-			content,
-			t.SourceFile,
-			tag,
-		}
-	}
-
-	viewportHeight := m.height - 8
-	if viewportHeight < 5 {
-		viewportHeight = 5
-	}
-
-	s := table.DefaultStyles()
-	s.Header = s.Header.
-		BorderBottom(true).
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(colorCyan).
-		Bold(true).
-		Foreground(colorCyan)
-	s.Selected = s.Selected.
-		Foreground(lipgloss.Color("15")).
-		Background(lipgloss.Color("62")).
-		Bold(true)
-	s.Cell = s.Cell.Foreground(colorWhite)
-
-	m.taskTable = table.New(
-		table.WithColumns(columns),
-		table.WithRows(rows),
-		table.WithFocused(true),
-		table.WithHeight(viewportHeight),
-		table.WithWidth(m.width-2),
-	)
-	m.taskTable.SetStyles(s)
-	m.taskTableReady = true
-}
-
-// renderTasksHeader renders the summary line above the task table.
-func (m AppModel) renderTasksHeader() string {
+// renderTasksContent renders the tasks view with colored Eisenhower tags.
+func (m AppModel) renderTasksContent() string {
 	pending := filterPending(m.tasks)
 	completed := filterCompleted(m.tasks)
 
@@ -81,17 +21,15 @@ func (m AppModel) renderTasksHeader() string {
 
 	var sb strings.Builder
 
-	// Summary
-	summaryStyle := lipgloss.NewStyle().Bold(true)
-	sb.WriteString(summaryStyle.Render(fmt.Sprintf(
-		" %d pending", len(pending))))
+	// Summary line
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Render(
+		fmt.Sprintf(" %d pending", len(pending))))
 	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(" | "))
 	sb.WriteString(lipgloss.NewStyle().Foreground(colorGreen).Render(
 		fmt.Sprintf("%d completed", len(completed))))
 	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(" | "))
 	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(
-		fmt.Sprintf("%d total", len(m.tasks))))
-	sb.WriteString("\n")
+		fmt.Sprintf("%d total\n", len(m.tasks))))
 
 	// Tag legend
 	tagOrder := []string{"#do", "#delegate", "#schedule", "#eliminate"}
@@ -101,9 +39,6 @@ func (m AppModel) renderTasksHeader() string {
 		if !ok {
 			continue
 		}
-		tagStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorCode)).
-			Bold(true)
 		count := 0
 		for _, t := range pending {
 			if strings.Contains(t.Content, tag) {
@@ -111,6 +46,9 @@ func (m AppModel) renderTasksHeader() string {
 			}
 		}
 		if count > 0 {
+			tagStyle := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorCode)).
+				Bold(true)
 			legendParts = append(legendParts, tagStyle.Render(fmt.Sprintf("%s(%d)", tag, count)))
 		}
 	}
@@ -118,28 +56,67 @@ func (m AppModel) renderTasksHeader() string {
 		sb.WriteString(" " + strings.Join(legendParts, "  ") + "\n")
 	}
 
+	sb.WriteString(lipgloss.NewStyle().Foreground(colorCyan).Render(strings.Repeat("─", m.width-6)) + "\n")
+
+	// Render each task with colored tags
+	for i, task := range pending {
+		isSelected := i == m.taskCursor
+
+		numStr := fmt.Sprintf("%2d", i+1)
+		icon := "○"
+		source := task.SourceFile
+
+		// Apply Eisenhower tag colors to content
+		content := task.Content
+		for tag, colorCode := range m.eisenhowerTags {
+			if strings.Contains(content, tag) {
+				tagStyle := lipgloss.NewStyle().
+					Foreground(lipgloss.Color(colorCode)).
+					Bold(true)
+				content = strings.ReplaceAll(content, tag, tagStyle.Render(tag))
+			}
+		}
+
+		if isSelected {
+			// Highlighted row
+			selStyle := lipgloss.NewStyle().
+				Background(lipgloss.Color("62")).
+				Foreground(lipgloss.Color("15")).
+				Bold(true)
+			numRendered := selStyle.Render(numStr)
+			iconRendered := selStyle.Render(" " + icon + " ")
+
+			// For selected row, we still want tag colors to show
+			sourceRendered := lipgloss.NewStyle().
+				Foreground(colorGray).
+				Render(fmt.Sprintf(" (%s)", source))
+
+			sb.WriteString(fmt.Sprintf(" %s%s %s%s\n", numRendered, iconRendered, content, sourceRendered))
+		} else {
+			numRendered := lipgloss.NewStyle().Foreground(colorGray).Render(numStr)
+			iconRendered := lipgloss.NewStyle().Foreground(colorRed).Render(" " + icon + " ")
+			sourceRendered := lipgloss.NewStyle().Foreground(colorGray).
+				Render(fmt.Sprintf(" (%s)", source))
+
+			sb.WriteString(fmt.Sprintf(" %s%s %s%s\n", numRendered, iconRendered, content, sourceRendered))
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(cheatSheetStyle.Render(
+		fmt.Sprintf("  j/k navigate · Enter complete · %d tasks", len(pending))))
+
 	return sb.String()
 }
 
-// handleTaskTableSelection completes the selected task from the table.
+// handleTaskTableSelection completes the task at the current cursor.
 func (m *AppModel) handleTaskTableSelection() tea.Cmd {
-	if !m.taskTableReady {
-		return nil
-	}
-
-	selectedRow := m.taskTable.SelectedRow()
-	if selectedRow == nil {
-		return nil
-	}
-
-	// Parse the index from the first column
-	idx := m.taskTable.Cursor()
 	pending := filterPending(m.tasks)
-	if idx < 0 || idx >= len(pending) {
+	if m.taskCursor < 0 || m.taskCursor >= len(pending) {
 		return nil
 	}
 
-	target := pending[idx]
+	target := pending[m.taskCursor]
 	for i, t := range m.tasks {
 		if t.Content == target.Content && !t.Completed {
 			return completeTaskCmd(m.vaultPath, i, m.tasks)
@@ -163,6 +140,21 @@ func (m *AppModel) handleTaskCompletion(num int) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// moveTaskCursor moves the cursor up or down.
+func (m *AppModel) moveTaskCursor(delta int) {
+	pending := filterPending(m.tasks)
+	if len(pending) == 0 {
+		return
+	}
+	m.taskCursor += delta
+	if m.taskCursor < 0 {
+		m.taskCursor = 0
+	}
+	if m.taskCursor >= len(pending) {
+		m.taskCursor = len(pending) - 1
+	}
 }
 
 func extractEisenhowerTag(content string) string {

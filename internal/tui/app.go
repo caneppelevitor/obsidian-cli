@@ -12,7 +12,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -33,12 +32,11 @@ type AppModel struct {
 	// Sub-models
 	input     textinput.Model
 	viewport  viewport.Model
-	editor    textarea.Model
-	help      help.Model
-	spinner   spinner.Model
-	fileList  list.Model
-	taskTable table.Model
-	keys      KeyMap
+	editor   textarea.Model
+	help     help.Model
+	spinner  spinner.Model
+	fileList list.Model
+	keys     KeyMap
 
 	// State
 	activeTab      int
@@ -51,8 +49,8 @@ type AppModel struct {
 	statusText     string
 	loading        bool
 	editMode       bool
+	taskCursor     int
 	fileListReady  bool
-	taskTableReady bool
 
 	// Layout
 	width, height int
@@ -166,33 +164,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// If tasks tab is active with table, handle table navigation
-		if m.activeTab == tabTasks && m.taskTableReady {
+		// Tasks tab: j/k navigation + Enter to complete
+		if m.activeTab == tabTasks {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
 				return m, tea.Quit
 			case key.Matches(msg, m.keys.Tab):
 				m.activeTab = (m.activeTab + 1) % 3
+				m.viewport.SetContent(m.renderContent())
 				if m.activeTab == tabFiles && !m.fileListReady {
 					m.loading = true
 					cmds = append(cmds, m.loadFileList(), m.spinner.Tick)
 				}
 				return m, tea.Batch(cmds...)
 			case key.Matches(msg, m.keys.Submit):
-				// Enter on table = complete selected task
 				cmd := m.handleTaskTableSelection()
 				if cmd != nil {
 					m.loading = true
 					cmds = append(cmds, cmd, m.spinner.Tick)
 				}
 				return m, tea.Batch(cmds...)
-			}
-
-			// Forward j/k/arrows to table
-			var tableCmd tea.Cmd
-			m.taskTable, tableCmd = m.taskTable.Update(msg)
-			if tableCmd != nil {
-				cmds = append(cmds, tableCmd)
+			case msg.String() == "j" || msg.String() == "down":
+				m.moveTaskCursor(1)
+				m.viewport.SetContent(m.renderContent())
+				return m, nil
+			case msg.String() == "k" || msg.String() == "up":
+				m.moveTaskCursor(-1)
+				m.viewport.SetContent(m.renderContent())
+				return m, nil
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -338,7 +337,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.Err == nil {
 			m.tasks = msg.Tasks
-			m.buildTaskTable()
+			pending := filterPending(m.tasks)
+			if m.taskCursor >= len(pending) {
+				m.taskCursor = max(0, len(pending)-1)
+			}
+			m.viewport.SetContent(m.renderContent())
 		}
 
 	case TaskCompletedMsg:
@@ -428,11 +431,6 @@ func (m AppModel) View() tea.View {
 		mainContent = editBorder.Render(m.editor.View())
 	case m.activeTab == tabFiles && m.fileListReady:
 		mainContent = m.fileList.View()
-	case m.activeTab == tabTasks && m.taskTableReady:
-		header := m.renderTasksHeader()
-		mainContent = borderStyle.
-			Width(m.width - 2).
-			Render(header + "\n" + m.taskTable.View())
 	default:
 		mainContent = borderStyle.
 			Width(m.width - 2).
@@ -502,10 +500,14 @@ func (m *AppModel) handleInput(input string) tea.Cmd {
 
 // renderContent builds the viewport content based on active tab.
 func (m AppModel) renderContent() string {
-	if m.activeTab == tabNotes {
+	switch m.activeTab {
+	case tabNotes:
 		return m.renderNotesContent()
+	case tabTasks:
+		return m.renderTasksContent()
+	default:
+		return ""
 	}
-	return ""
 }
 
 func (m AppModel) buildStatusBar() string {
