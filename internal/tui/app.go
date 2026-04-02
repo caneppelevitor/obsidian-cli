@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
@@ -32,6 +33,7 @@ type AppModel struct {
 	// Sub-models
 	input     textinput.Model
 	viewport  viewport.Model
+	editor    textarea.Model
 	help      help.Model
 	spinner   spinner.Model
 	fileList  list.Model
@@ -48,6 +50,7 @@ type AppModel struct {
 	tasks          []tasks.Task
 	statusText     string
 	loading        bool
+	editMode       bool
 	fileListReady  bool
 	taskTableReady bool
 
@@ -71,8 +74,15 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 	s := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	s.Style = lipgloss.NewStyle().Foreground(colorCyan)
 
+	ed := textarea.New()
+	ed.Prompt = "│ "
+	ed.ShowLineNumbers = true
+	ed.CharLimit = 0 // no limit
+	ed.Blur()
+
 	return AppModel{
 		input:          ti,
+		editor:         ed,
 		help:           h,
 		spinner:        s,
 		keys:           DefaultKeyMap(),
@@ -122,8 +132,40 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fileListReady {
 			m.fileList.SetSize(m.width-2, viewportHeight)
 		}
+		if m.editMode {
+			m.editor.SetWidth(m.width - 4)
+			m.editor.SetHeight(viewportHeight)
+		}
 
 	case tea.KeyPressMsg:
+		// Edit mode: forward everything to textarea except Esc and Ctrl+S
+		if m.editMode {
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
+			case msg.String() == "escape":
+				cmd := m.exitEditMode()
+				if cmd != nil {
+					m.loading = true
+					cmds = append(cmds, cmd, m.spinner.Tick)
+				}
+				return m, tea.Batch(cmds...)
+			case msg.String() == "ctrl+s":
+				m.fileContent = m.editor.Value()
+				m.loading = true
+				cmds = append(cmds, saveFileCmd(m.currentFile, m.fileContent), m.spinner.Tick)
+				m.statusText = "Saved"
+				return m, tea.Batch(cmds...)
+			default:
+				var edCmd tea.Cmd
+				m.editor, edCmd = m.editor.Update(msg)
+				if edCmd != nil {
+					cmds = append(cmds, edCmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
+		}
+
 		// If tasks tab is active with table, handle table navigation
 		if m.activeTab == tabTasks && m.taskTableReady {
 			switch {
@@ -222,6 +264,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Clear):
 			m.input.Reset()
 			return m, nil
+
+		case msg.String() == "e":
+			// Enter edit mode only when input is empty and on notes tab
+			if m.activeTab == tabNotes && m.input.Value() == "" {
+				cmd := m.enterEditMode()
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
 		}
 
 	case tea.MouseClickMsg:
@@ -345,6 +397,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Update editor when in edit mode (for cursor blink etc.)
+	if m.editMode {
+		var edCmd tea.Cmd
+		m.editor, edCmd = m.editor.Update(msg)
+		if edCmd != nil {
+			cmds = append(cmds, edCmd)
+		}
+	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -359,6 +420,12 @@ func (m AppModel) View() tea.View {
 	// Main content area
 	var mainContent string
 	switch {
+	case m.activeTab == tabNotes && m.editMode:
+		editBorder := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Width(m.width - 2)
+		mainContent = editBorder.Render(m.editor.View())
 	case m.activeTab == tabFiles && m.fileListReady:
 		mainContent = m.fileList.View()
 	case m.activeTab == tabTasks && m.taskTableReady:
@@ -380,8 +447,8 @@ func (m AppModel) View() tea.View {
 	helpBar := m.help.View(m.keys)
 
 	var result string
-	if m.activeTab == tabNotes {
-		// Notes tab: includes input line
+	if m.activeTab == tabNotes && !m.editMode {
+		// Notes view mode: includes quick input line
 		sep := separatorStyle.Render(strings.Repeat("─", m.width))
 		inputLine := inputPromptStyle.Render("> ") + m.input.View()
 		result = lipgloss.JoinVertical(lipgloss.Left,
@@ -391,6 +458,15 @@ func (m AppModel) View() tea.View {
 			inputLine,
 			statusBar,
 			helpBar,
+		)
+	} else if m.editMode {
+		// Edit mode: editor fills the space, no input bar
+		editIndicator := renderEditModeIndicator()
+		editStatus := statusBarStyle.Width(m.width).Render(" " + editIndicator + "  esc save & exit · ctrl+s save · ctrl+c quit")
+		result = lipgloss.JoinVertical(lipgloss.Left,
+			tabBar,
+			mainContent,
+			editStatus,
 		)
 	} else {
 		// Tasks/Files tabs: no input line

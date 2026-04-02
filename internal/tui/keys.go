@@ -9,7 +9,8 @@ type KeyMap struct {
 	Submit    key.Binding
 	Clear     key.Binding
 	Help      key.Binding
-	ScrollUp  key.Binding
+	Edit       key.Binding
+	ScrollUp   key.Binding
 	ScrollDown key.Binding
 }
 
@@ -36,6 +37,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+?"),
 			key.WithHelp("ctrl+?", "help"),
 		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit mode"),
+		),
 		ScrollUp: key.NewBinding(
 			key.WithKeys("pgup"),
 			key.WithHelp("pgup", "scroll up"),
@@ -49,13 +54,13 @@ func DefaultKeyMap() KeyMap {
 
 // ShortHelp returns keybindings for the short help view.
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Tab, k.Submit, k.Clear, k.Help, k.Quit}
+	return []key.Binding{k.Tab, k.Submit, k.Edit, k.Help, k.Quit}
 }
 
 // FullHelp returns keybindings for the expanded help view.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Tab, k.Submit, k.Clear},
+		{k.Tab, k.Submit, k.Clear, k.Edit},
 		{k.ScrollUp, k.ScrollDown},
 		{k.Help, k.Quit},
 	}

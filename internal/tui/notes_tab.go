@@ -6,16 +6,45 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"github.com/charmbracelet/glamour"
 
 	"github.com/caneppelevitor/obsidian-cli/internal/content"
 	"github.com/caneppelevitor/obsidian-cli/internal/vault"
 )
 
-func (m AppModel) renderNotesContent() string {
+// renderNotesView renders the daily note in view mode using Glamour.
+func (m AppModel) renderNotesView() string {
 	if m.fileContent == "" {
 		return "File is empty"
 	}
 
+	width := m.width - 6
+	if width < 40 {
+		width = 40
+	}
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(width),
+		glamour.WithEmoji(),
+		glamour.WithPreservedNewLines(),
+	)
+	if err != nil {
+		return m.renderNotesFallback()
+	}
+
+	rendered, err := renderer.Render(m.fileContent)
+	if err != nil {
+		return m.renderNotesFallback()
+	}
+
+	return rendered
+}
+
+// renderNotesFallback renders with manual line-by-line styling (used if Glamour fails).
+func (m AppModel) renderNotesFallback() string {
 	lines := strings.Split(m.fileContent, "\n")
 	var rendered []string
 
@@ -25,28 +54,33 @@ func (m AppModel) renderNotesContent() string {
 		rendered = append(rendered, lineNum+" "+styledLine)
 	}
 
-	// Add cheat sheet if there's spare space
-	viewportHeight := m.viewport.Height()
-	spareLines := viewportHeight - len(rendered)
-	if spareLines >= 8 {
-		cheatSheet := []string{
-			"",
-			cheatSheetStyle.Render("  Quick Reference:"),
-			cheatSheetStyle.Render("    []  text   →  Tasks"),
-			cheatSheetStyle.Render("    -   text   →  Ideas"),
-			cheatSheetStyle.Render("    ?   text   →  Questions"),
-			cheatSheetStyle.Render("    !   text   →  Insights"),
-			cheatSheetStyle.Render("    /help      →  Show commands"),
-			cheatSheetStyle.Render("    /save      →  Save file"),
-		}
-		blankLines := spareLines - len(cheatSheet)
-		for i := 0; i < blankLines; i++ {
-			rendered = append(rendered, "")
-		}
-		rendered = append(rendered, cheatSheet...)
+	return strings.Join(rendered, "\n")
+}
+
+// renderNotesContent dispatches to view or edit rendering.
+func (m AppModel) renderNotesContent() string {
+	if m.editMode {
+		return "" // textarea renders directly in View(), not through viewport
 	}
 
-	return strings.Join(rendered, "\n")
+	rendered := m.renderNotesView()
+
+	// Add cheat sheet if there's spare space
+	viewportHeight := m.viewport.Height()
+	renderedLines := strings.Count(rendered, "\n") + 1
+	spareLines := viewportHeight - renderedLines
+	if spareLines >= 6 {
+		cheatSheet := []string{
+			"",
+			cheatSheetStyle.Render("  Quick Input:"),
+			cheatSheetStyle.Render("    []  text → Tasks    -  text → Ideas"),
+			cheatSheetStyle.Render("    ?   text → Questions !  text → Insights"),
+			cheatSheetStyle.Render("    e → edit mode    /help → commands"),
+		}
+		rendered += strings.Join(cheatSheet, "\n")
+	}
+
+	return rendered
 }
 
 func (m *AppModel) handleContentInput(input string) tea.Cmd {
@@ -89,13 +123,16 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 
 	case cmd == "help":
 		m.fileContent = helpText
-		m.viewport.SetContent(m.renderContent())
+		m.viewport.SetContent(m.renderNotesContent())
 		return nil
 
 	case cmd == "view", cmd == "files":
 		m.activeTab = tabFiles
-		m.viewport.SetContent(m.renderContent())
-		return m.loadFileList()
+		if !m.fileListReady {
+			m.loading = true
+			return tea.Batch(m.loadFileList(), m.spinner.Tick)
+		}
+		return nil
 
 	case strings.HasPrefix(cmd, "open "):
 		return m.handleOpenFile(strings.TrimSpace(cmd[5:]))
@@ -114,12 +151,9 @@ func (m *AppModel) handleOpenFile(target string) tea.Cmd {
 		}
 
 		var filename string
-		if num, parseErr := fmt.Sscanf(target, "%d", new(int)); parseErr == nil && num == 1 {
-			n := 0
-			fmt.Sscanf(target, "%d", &n)
-			if n > 0 && n <= len(files) {
-				filename = files[n-1]
-			}
+		var n int
+		if _, scanErr := fmt.Sscanf(target, "%d", &n); scanErr == nil && n > 0 && n <= len(files) {
+			filename = files[n-1]
 		}
 		if filename == "" {
 			for _, f := range files {
@@ -143,6 +177,40 @@ func (m *AppModel) handleOpenFile(target string) tea.Cmd {
 	}
 }
 
+// enterEditMode switches to textarea editing.
+func (m *AppModel) enterEditMode() tea.Cmd {
+	m.editMode = true
+	m.editor.SetValue(m.fileContent)
+
+	viewportHeight := m.height - 5
+	if viewportHeight < 5 {
+		viewportHeight = 5
+	}
+	m.editor.SetWidth(m.width - 4)
+	m.editor.SetHeight(viewportHeight)
+
+	return m.editor.Focus()
+}
+
+// exitEditMode saves and returns to view mode.
+func (m *AppModel) exitEditMode() tea.Cmd {
+	m.editMode = false
+	m.fileContent = m.editor.Value()
+	m.editor.Blur()
+	m.viewport.SetContent(m.renderNotesContent())
+	return saveFileCmd(m.currentFile, m.fileContent)
+}
+
+// renderEditModeIndicator returns the edit mode label for the border.
+func renderEditModeIndicator() string {
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color("62")).
+		Foreground(lipgloss.Color("15")).
+		Bold(true).
+		Padding(0, 1).
+		Render(" EDITING ")
+}
+
 const helpText = `
 Commands:
   /save      Save current file
@@ -158,12 +226,19 @@ Content Prefixes:
 
 Navigation:
   Tab        Switch between tabs
+  e          Enter edit mode (Daily Note)
   Ctrl+C     Exit
-  Escape     Clear input
+  Escape     Clear input / exit edit mode
+
+In Edit Mode:
+  Full cursor editing of your note
+  Esc        Save and exit edit mode
+  Ctrl+S     Save without exiting
 
 In Tasks tab:
-  Type a number and press Enter to complete that task
+  j/k        Navigate tasks
+  Enter      Complete selected task
 
 In Files tab:
-  Type to filter, Enter to open, Esc to go back
+  Type to filter, Enter to open
 `
