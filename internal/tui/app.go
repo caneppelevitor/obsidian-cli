@@ -119,7 +119,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.SetWidth(msg.Width)
 
-		viewportHeight := m.height - 5 // tab bar + border(2) + sep/input + status
+		viewportHeight := m.height - 7 // tab(2) + border(2) + sep(1) + input(1) + status(1)
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		}
@@ -369,7 +369,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FileListMsg:
 		m.loading = false
 		if len(msg.Files) > 0 {
-			viewportHeight := m.height - 6
+			viewportHeight := m.height - 7
 			if viewportHeight < 1 {
 				viewportHeight = 10
 			}
