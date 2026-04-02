@@ -3,29 +3,33 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"os"
 	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 )
 
-// ─── Catppuccin Mocha Palette ───────────────────────────────────────────────
-var (
-	colorBase     = lipgloss.Color("#1e1e2e") // background
-	colorSurface0 = lipgloss.Color("#313244") // raised surfaces
-	colorSurface1 = lipgloss.Color("#45475a") // borders, dividers
-	colorOverlay  = lipgloss.Color("#6c7086") // dim/muted text
-	colorSubtext  = lipgloss.Color("#a6adc8") // secondary text
-	colorText     = lipgloss.Color("#cdd6f4") // primary text
+// ─── Adaptive Color Palette ─────────────────────────────────────────────────
+// Uses Catppuccin Mocha (dark) / Latte (light) with automatic detection.
+var ld = lipgloss.LightDark(lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
 
-	colorBlue     = lipgloss.Color("#89b4fa") // primary accent, active focus
-	colorGreen    = lipgloss.Color("#a6e3a1") // success, completed, checkboxes
-	colorPeach    = lipgloss.Color("#fab387") // warning, commands
-	colorMauve    = lipgloss.Color("#cba6f7") // headings H1, special
-	colorRed      = lipgloss.Color("#f38ba8") // error, urgent, #do
-	colorLavender = lipgloss.Color("#b4befe") // links, secondary accent
-	colorYellow   = lipgloss.Color("#f9e2af") // highlights, bullets, ideas
-	colorTeal     = lipgloss.Color("#94e2d5") // info, headings H2
+var (
+	colorBase     = ld(lipgloss.Color("#eff1f5"), lipgloss.Color("#1e1e2e"))
+	colorSurface0 = ld(lipgloss.Color("#ccd0da"), lipgloss.Color("#313244"))
+	colorSurface1 = ld(lipgloss.Color("#bcc0cc"), lipgloss.Color("#45475a"))
+	colorOverlay  = ld(lipgloss.Color("#7c7f93"), lipgloss.Color("#6c7086"))
+	colorSubtext  = ld(lipgloss.Color("#5c5f77"), lipgloss.Color("#a6adc8"))
+	colorText     = ld(lipgloss.Color("#4c4f69"), lipgloss.Color("#cdd6f4"))
+
+	colorBlue     = ld(lipgloss.Color("#1e66f5"), lipgloss.Color("#89b4fa"))
+	colorGreen    = ld(lipgloss.Color("#40a02b"), lipgloss.Color("#a6e3a1"))
+	colorPeach    = ld(lipgloss.Color("#fe640b"), lipgloss.Color("#fab387"))
+	colorMauve    = ld(lipgloss.Color("#8839ef"), lipgloss.Color("#cba6f7"))
+	colorRed      = ld(lipgloss.Color("#d20f39"), lipgloss.Color("#f38ba8"))
+	colorLavender = ld(lipgloss.Color("#7287fd"), lipgloss.Color("#b4befe"))
+	colorYellow   = ld(lipgloss.Color("#df8e1d"), lipgloss.Color("#f9e2af"))
+	colorTeal     = ld(lipgloss.Color("#179299"), lipgloss.Color("#94e2d5"))
 )
 
 // ─── Eisenhower Tag Colors (harmonized with palette) ────────────────────────

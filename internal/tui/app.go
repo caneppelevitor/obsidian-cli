@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -30,11 +31,12 @@ const (
 // AppModel is the root Bubble Tea model.
 type AppModel struct {
 	// Sub-models
-	input     textinput.Model
-	viewport  viewport.Model
+	input    textinput.Model
+	viewport viewport.Model
 	editor   textarea.Model
 	help     help.Model
 	spinner  spinner.Model
+	progress progress.Model
 	fileList list.Model
 	keys     KeyMap
 
@@ -75,14 +77,22 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 	ed := textarea.New()
 	ed.Prompt = "│ "
 	ed.ShowLineNumbers = true
-	ed.CharLimit = 0 // no limit
+	ed.CharLimit = 0
 	ed.Blur()
+
+	prog := progress.New(
+		progress.WithWidth(20),
+		progress.WithoutPercentage(),
+	)
+	prog.FullColor = colorGreen
+	prog.EmptyColor = colorSurface1
 
 	return AppModel{
 		input:          ti,
 		editor:         ed,
 		help:           h,
 		spinner:        s,
+		progress:       prog,
 		keys:           DefaultKeyMap(),
 		activeTab:      tabNotes,
 		vaultPath:      vaultPath,
@@ -307,7 +317,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.statusText = fmt.Sprintf("Error saving: %v", msg.Err)
 		} else {
-			m.statusText = ""
+			m.statusText = lipgloss.NewStyle().Foreground(colorGreen).Render("✓ Saved")
 			if m.lastInserted > 0 {
 				vpHeight := m.viewport.Height()
 				yOffset := m.viewport.YOffset()
@@ -371,6 +381,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StatusMsg:
 		m.statusText = msg.Text
+
+	case tea.FocusMsg:
+		// Terminal regained focus — no action needed
+
+	case tea.BlurMsg:
+		// Terminal lost focus — auto-save if we have content
+		if m.currentFile != "" && m.fileContent != "" {
+			if m.editMode {
+				m.fileContent = m.editor.Value()
+			}
+			cmds = append(cmds, saveFileCmd(m.currentFile, m.fileContent))
+		}
 	}
 
 	// Update text input (only when not on files tab)
@@ -436,12 +458,24 @@ func (m AppModel) View() tea.View {
 		mainContent = m.fileList.View()
 	default:
 		border := activeBorderStyle
-		if m.activeTab != tabNotes && m.activeTab != tabTasks {
-			border = inactiveBorderStyle
+		vpContent := m.viewport.View()
+
+		// Show centered spinner for initial heavy loads
+		if m.loading && m.activeTab == tabTasks && len(m.tasks) == 0 {
+			viewportHeight := m.height - 5
+			if viewportHeight < 3 {
+				viewportHeight = 3
+			}
+			vpContent = lipgloss.Place(
+				m.width-4, viewportHeight,
+				lipgloss.Center, lipgloss.Center,
+				m.spinner.View()+" Loading tasks...",
+			)
 		}
+
 		mainContent = border.
 			Width(m.width - 2).
-			Render(m.viewport.View())
+			Render(vpContent)
 	}
 
 	// Status bar
@@ -479,6 +513,7 @@ func (m AppModel) View() tea.View {
 	v := tea.NewView(result)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	v.ReportFocus = true
 	v.WindowTitle = "Obsidian: " + filepath.Base(m.currentFile)
 	return v
 }

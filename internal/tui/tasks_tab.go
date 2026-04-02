@@ -26,7 +26,13 @@ func (m AppModel) renderTasksContent() string {
 
 	var sb strings.Builder
 
-	// Summary line
+	// Summary line with progress bar
+	total := len(m.tasks)
+	completionPercent := 0.0
+	if total > 0 {
+		completionPercent = float64(len(completed)) / float64(total)
+	}
+
 	pendingStyle := lipgloss.NewStyle().Bold(true).Foreground(colorText)
 	doneStyle := lipgloss.NewStyle().Foreground(colorGreen)
 	totalStyle := lipgloss.NewStyle().Foreground(colorOverlay)
@@ -35,7 +41,9 @@ func (m AppModel) renderTasksContent() string {
 	sb.WriteString("  ")
 	sb.WriteString(doneStyle.Render(fmt.Sprintf("%d done", len(completed))))
 	sb.WriteString("  ")
-	sb.WriteString(totalStyle.Render(fmt.Sprintf("%d total", len(m.tasks))))
+	sb.WriteString(totalStyle.Render(fmt.Sprintf("%d total", total)))
+	sb.WriteString("  ")
+	sb.WriteString(m.progress.ViewAs(completionPercent))
 
 	// Tag legend — right side
 	tagOrder := []string{"#do", "#delegate", "#schedule", "#eliminate"}
