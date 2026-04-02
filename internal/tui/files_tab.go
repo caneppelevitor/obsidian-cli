@@ -28,6 +28,9 @@ func newFileList(files []string, width, height int) list.Model {
 	}
 
 	delegate := list.NewDefaultDelegate()
+	delegate.SetHeight(1)
+	delegate.SetSpacing(0)
+	delegate.ShowDescription = false
 
 	l := list.New(items, delegate, width, height)
 	l.Title = "Vault Files"
