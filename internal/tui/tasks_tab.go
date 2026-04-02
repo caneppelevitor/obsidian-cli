@@ -5,98 +5,147 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/table"
 	"charm.land/lipgloss/v2"
 
 	"github.com/caneppelevitor/obsidian-cli/internal/tasks"
 )
 
-type indexedTask struct {
-	task  tasks.Task
-	index int
+// buildTaskTable creates a table.Model from the current task list.
+func (m *AppModel) buildTaskTable() {
+	pending := filterPending(m.tasks)
+
+	columns := []table.Column{
+		{Title: "#", Width: 4},
+		{Title: "Status", Width: 3},
+		{Title: "Task", Width: max(m.width-38, 20)},
+		{Title: "Source", Width: 12},
+		{Title: "Tag", Width: 12},
+	}
+
+	rows := make([]table.Row, len(pending))
+	for i, t := range pending {
+		tag := extractEisenhowerTag(t.Content)
+		content := t.Content
+		// Strip the tag from content to avoid duplication
+		if tag != "" {
+			content = strings.ReplaceAll(content, tag, "")
+			content = strings.TrimSpace(content)
+		}
+		rows[i] = table.Row{
+			fmt.Sprintf("%d", i+1),
+			"○",
+			content,
+			t.SourceFile,
+			tag,
+		}
+	}
+
+	viewportHeight := m.height - 8
+	if viewportHeight < 5 {
+		viewportHeight = 5
+	}
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderBottom(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(colorCyan).
+		Bold(true).
+		Foreground(colorCyan)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("62")).
+		Bold(true)
+	s.Cell = s.Cell.Foreground(colorWhite)
+
+	m.taskTable = table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(true),
+		table.WithHeight(viewportHeight),
+		table.WithWidth(m.width-2),
+	)
+	m.taskTable.SetStyles(s)
+	m.taskTableReady = true
 }
 
-func (m AppModel) renderTasksContent() string {
-	pendingTasks := filterPending(m.tasks)
-	completedTasks := filterCompleted(m.tasks)
+// renderTasksHeader renders the summary line above the task table.
+func (m AppModel) renderTasksHeader() string {
+	pending := filterPending(m.tasks)
+	completed := filterCompleted(m.tasks)
 
-	if len(pendingTasks) == 0 {
-		return "\nNo pending tasks!\n\nCreate some tasks in your daily note using [] prefix"
+	if len(pending) == 0 {
+		return "\n  No pending tasks!\n\n  Create some tasks in your daily note using [] prefix"
 	}
 
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf(" %d pending | %d completed | %d total\n",
-		len(pendingTasks), len(completedTasks), len(m.tasks)))
-	sb.WriteString(lipgloss.NewStyle().Foreground(colorCyan).Render(strings.Repeat("─", 50)) + "\n")
+	// Summary
+	summaryStyle := lipgloss.NewStyle().Bold(true)
+	sb.WriteString(summaryStyle.Render(fmt.Sprintf(
+		" %d pending", len(pending))))
+	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(" | "))
+	sb.WriteString(lipgloss.NewStyle().Foreground(colorGreen).Render(
+		fmt.Sprintf("%d completed", len(completed))))
+	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(" | "))
+	sb.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render(
+		fmt.Sprintf("%d total", len(m.tasks))))
+	sb.WriteString("\n")
 
+	// Tag legend
 	tagOrder := []string{"#do", "#delegate", "#schedule", "#eliminate"}
-	groups := make(map[string][]indexedTask)
-	var untagged []indexedTask
-
-	for i, task := range pendingTasks {
-		matched := false
-		for _, tag := range tagOrder {
-			if strings.Contains(task.Content, tag) {
-				groups[tag] = append(groups[tag], indexedTask{task, i})
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			untagged = append(untagged, indexedTask{task, i})
-		}
-	}
-
+	var legendParts []string
 	for _, tag := range tagOrder {
-		if tasksInGroup, ok := groups[tag]; ok && len(tasksInGroup) > 0 {
-			colorCode := m.eisenhowerTags[tag]
-			tagStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorCode)).
-				Bold(true)
-			sb.WriteString(fmt.Sprintf("\n%s\n", tagStyle.Render(fmt.Sprintf("%s (%d)", tag, len(tasksInGroup)))))
-			for _, it := range tasksInGroup {
-				sb.WriteString(m.renderTask(it))
+		colorCode, ok := m.eisenhowerTags[tag]
+		if !ok {
+			continue
+		}
+		tagStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorCode)).
+			Bold(true)
+		count := 0
+		for _, t := range pending {
+			if strings.Contains(t.Content, tag) {
+				count++
 			}
 		}
-	}
-
-	if len(untagged) > 0 {
-		sb.WriteString(fmt.Sprintf("\n%s\n",
-			lipgloss.NewStyle().Foreground(colorGray).Bold(true).Render(
-				fmt.Sprintf("Untagged (%d)", len(untagged)))))
-		for _, it := range untagged {
-			sb.WriteString(m.renderTask(it))
+		if count > 0 {
+			legendParts = append(legendParts, tagStyle.Render(fmt.Sprintf("%s(%d)", tag, count)))
 		}
 	}
-
-	sb.WriteString(fmt.Sprintf("\n%s",
-		cheatSheetStyle.Render(fmt.Sprintf("Tip: Type a number (1-%d) and press Enter to complete that task", len(pendingTasks)))))
+	if len(legendParts) > 0 {
+		sb.WriteString(" " + strings.Join(legendParts, "  ") + "\n")
+	}
 
 	return sb.String()
 }
 
-func (m AppModel) renderTask(it indexedTask) string {
-	numStyle := lipgloss.NewStyle().Foreground(colorYellow)
-	iconStyle := lipgloss.NewStyle().Foreground(colorRed)
-
-	taskContent := it.task.Content
-	for tag, colorCode := range m.eisenhowerTags {
-		if strings.Contains(taskContent, tag) {
-			tagStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(colorCode)).
-				Bold(true)
-			taskContent = strings.ReplaceAll(taskContent, tag, tagStyle.Render(tag))
-		}
+// handleTaskTableSelection completes the selected task from the table.
+func (m *AppModel) handleTaskTableSelection() tea.Cmd {
+	if !m.taskTableReady {
+		return nil
 	}
 
-	sourceStyle := lipgloss.NewStyle().Foreground(colorGray)
+	selectedRow := m.taskTable.SelectedRow()
+	if selectedRow == nil {
+		return nil
+	}
 
-	return fmt.Sprintf("  %s %s %s %s\n",
-		numStyle.Render(fmt.Sprintf("[%d]", it.index+1)),
-		iconStyle.Render("○"),
-		taskContent,
-		sourceStyle.Render(fmt.Sprintf("(%s)", it.task.SourceFile)),
-	)
+	// Parse the index from the first column
+	idx := m.taskTable.Cursor()
+	pending := filterPending(m.tasks)
+	if idx < 0 || idx >= len(pending) {
+		return nil
+	}
+
+	target := pending[idx]
+	for i, t := range m.tasks {
+		if t.Content == target.Content && !t.Completed {
+			return completeTaskCmd(m.vaultPath, i, m.tasks)
+		}
+	}
+	return nil
 }
 
 func (m *AppModel) handleTaskCompletion(num int) tea.Cmd {
@@ -114,6 +163,16 @@ func (m *AppModel) handleTaskCompletion(num int) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func extractEisenhowerTag(content string) string {
+	tags := []string{"#do", "#delegate", "#schedule", "#eliminate"}
+	for _, tag := range tags {
+		if strings.Contains(content, tag) {
+			return tag
+		}
+	}
+	return ""
 }
 
 func filterPending(taskList []tasks.Task) []tasks.Task {
@@ -134,4 +193,11 @@ func filterCompleted(taskList []tasks.Task) []tasks.Task {
 		}
 	}
 	return result
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

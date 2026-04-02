@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
@@ -29,12 +30,13 @@ const (
 // AppModel is the root Bubble Tea model.
 type AppModel struct {
 	// Sub-models
-	input    textinput.Model
-	viewport viewport.Model
-	help     help.Model
-	spinner  spinner.Model
-	fileList list.Model
-	keys     KeyMap
+	input     textinput.Model
+	viewport  viewport.Model
+	help      help.Model
+	spinner   spinner.Model
+	fileList  list.Model
+	taskTable table.Model
+	keys      KeyMap
 
 	// State
 	activeTab      int
@@ -47,6 +49,7 @@ type AppModel struct {
 	statusText     string
 	loading        bool
 	fileListReady  bool
+	taskTableReady bool
 
 	// Layout
 	width, height int
@@ -121,6 +124,37 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		// If tasks tab is active with table, handle table navigation
+		if m.activeTab == tabTasks && m.taskTableReady {
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, m.keys.Tab):
+				m.activeTab = (m.activeTab + 1) % 3
+				if m.activeTab == tabFiles && !m.fileListReady {
+					m.loading = true
+					cmds = append(cmds, m.loadFileList(), m.spinner.Tick)
+				}
+				return m, tea.Batch(cmds...)
+			case key.Matches(msg, m.keys.Submit):
+				// Enter on table = complete selected task
+				cmd := m.handleTaskTableSelection()
+				if cmd != nil {
+					m.loading = true
+					cmds = append(cmds, cmd, m.spinner.Tick)
+				}
+				return m, tea.Batch(cmds...)
+			}
+
+			// Forward j/k/arrows to table
+			var tableCmd tea.Cmd
+			m.taskTable, tableCmd = m.taskTable.Update(msg)
+			if tableCmd != nil {
+				cmds = append(cmds, tableCmd)
+			}
+			return m, tea.Batch(cmds...)
+		}
+
 		// If files tab is active and not filtering, handle tab-level keys
 		if m.activeTab == tabFiles && m.fileListReady {
 			switch {
@@ -252,9 +286,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.Err == nil {
 			m.tasks = msg.Tasks
-			if m.activeTab == tabTasks {
-				m.viewport.SetContent(m.renderContent())
-			}
+			m.buildTaskTable()
 		}
 
 	case TaskCompletedMsg:
@@ -326,9 +358,15 @@ func (m AppModel) View() tea.View {
 
 	// Main content area
 	var mainContent string
-	if m.activeTab == tabFiles && m.fileListReady {
+	switch {
+	case m.activeTab == tabFiles && m.fileListReady:
 		mainContent = m.fileList.View()
-	} else {
+	case m.activeTab == tabTasks && m.taskTableReady:
+		header := m.renderTasksHeader()
+		mainContent = borderStyle.
+			Width(m.width - 2).
+			Render(header + "\n" + m.taskTable.View())
+	default:
 		mainContent = borderStyle.
 			Width(m.width - 2).
 			Render(m.viewport.View())
@@ -342,16 +380,8 @@ func (m AppModel) View() tea.View {
 	helpBar := m.help.View(m.keys)
 
 	var result string
-	if m.activeTab == tabFiles {
-		// Files tab: no input line, just list
-		result = lipgloss.JoinVertical(lipgloss.Left,
-			tabBar,
-			mainContent,
-			statusBar,
-			helpBar,
-		)
-	} else {
-		// Notes/Tasks tabs: include input and separator
+	if m.activeTab == tabNotes {
+		// Notes tab: includes input line
 		sep := separatorStyle.Render(strings.Repeat("─", m.width))
 		inputLine := inputPromptStyle.Render("> ") + m.input.View()
 		result = lipgloss.JoinVertical(lipgloss.Left,
@@ -359,6 +389,14 @@ func (m AppModel) View() tea.View {
 			mainContent,
 			sep,
 			inputLine,
+			statusBar,
+			helpBar,
+		)
+	} else {
+		// Tasks/Files tabs: no input line
+		result = lipgloss.JoinVertical(lipgloss.Left,
+			tabBar,
+			mainContent,
 			statusBar,
 			helpBar,
 		)
@@ -388,14 +426,10 @@ func (m *AppModel) handleInput(input string) tea.Cmd {
 
 // renderContent builds the viewport content based on active tab.
 func (m AppModel) renderContent() string {
-	switch m.activeTab {
-	case tabNotes:
+	if m.activeTab == tabNotes {
 		return m.renderNotesContent()
-	case tabTasks:
-		return m.renderTasksContent()
-	default:
-		return ""
 	}
+	return ""
 }
 
 func (m AppModel) buildStatusBar() string {
@@ -418,7 +452,7 @@ func (m AppModel) buildStatusBar() string {
 		pending := len(filterPending(m.tasks))
 		completed := len(filterCompleted(m.tasks))
 		total := len(m.tasks)
-		return fmt.Sprintf("%s Tasks | %d pending | %d completed | %d total", prefix, pending, completed, total)
+		return fmt.Sprintf("%s Tasks | %d pending | %d completed | %d total | j/k navigate, Enter complete", prefix, pending, completed, total)
 	case tabFiles:
 		return prefix + " Files | Type to filter, Enter to open"
 	default:
