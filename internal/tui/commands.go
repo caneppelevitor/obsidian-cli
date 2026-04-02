@@ -43,6 +43,18 @@ type StatusMsg struct{ Text string }
 // FileListMsg is sent with a list of files in the vault.
 type FileListMsg struct{ Files []string }
 
+// FilePreviewMsg is sent with the preview content for a file.
+type FilePreviewMsg struct {
+	Name      string
+	Content   string
+	WordCount int
+	LineCount int
+	ModTime   string
+	Size      string
+	Sections  []string
+	Tags      []string
+}
+
 // Commands
 
 func saveFileCmd(filePath, fileContent string) tea.Cmd {

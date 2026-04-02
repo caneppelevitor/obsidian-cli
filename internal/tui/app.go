@@ -51,8 +51,12 @@ type AppModel struct {
 	statusText     string
 	loading        bool
 	editMode       bool
-	taskCursor     int
-	fileListReady  bool
+	taskCursor         int
+	fileListReady      bool
+	filePreviewContent string
+	filePreviewName    string
+	filePreviewMeta    filePreviewMetadata
+	lastPreviewedFile  string
 
 	// Layout
 	width, height int
@@ -138,7 +142,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.fileListReady {
-			m.fileList.SetSize(m.width-2, viewportHeight)
+			listWidth := (m.width - 4) * 55 / 100
+			if listWidth < 20 {
+				listWidth = 20
+			}
+			m.fileList.SetSize(listWidth, viewportHeight-2)
 		}
 		if m.editMode {
 			m.editor.SetWidth(m.width - 4)
@@ -233,6 +241,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fileList, listCmd = m.fileList.Update(msg)
 			if listCmd != nil {
 				cmds = append(cmds, listCmd)
+			}
+
+			// Load preview if selected file changed
+			if selected := m.fileList.SelectedItem(); selected != nil {
+				if fi, ok := selected.(FileItem); ok && fi.name != m.lastPreviewedFile {
+					m.lastPreviewedFile = fi.name
+					cmds = append(cmds, m.loadFilePreview())
+				}
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -373,10 +389,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if viewportHeight < 1 {
 				viewportHeight = 10
 			}
-			m.fileList = newFileList(msg.Files, m.width-2, viewportHeight)
+			listWidth := (m.width - 4) * 55 / 100
+			if listWidth < 20 {
+				listWidth = 20
+			}
+			m.fileList = newFileList(msg.Files, listWidth, viewportHeight-2)
 			m.fileListReady = true
+			// Load preview for first file
+			cmds = append(cmds, m.loadFilePreview())
 		} else {
 			m.statusText = "No markdown files found"
+		}
+
+	case FilePreviewMsg:
+		m.filePreviewName = msg.Name
+		m.filePreviewContent = msg.Content
+		m.filePreviewMeta = filePreviewMetadata{
+			WordCount: msg.WordCount,
+			LineCount: msg.LineCount,
+			ModTime:   msg.ModTime,
+			Size:      msg.Size,
+			Sections:  msg.Sections,
+			Tags:      msg.Tags,
 		}
 
 	case StatusMsg:
@@ -455,7 +489,7 @@ func (m AppModel) View() tea.View {
 			Render(m.editor.View())
 		mainContent = title + "\n" + body
 	case m.activeTab == tabFiles && m.fileListReady:
-		mainContent = m.fileList.View()
+		mainContent = m.renderFilesTab()
 	default:
 		border := activeBorderStyle
 		vpContent := m.viewport.View()
