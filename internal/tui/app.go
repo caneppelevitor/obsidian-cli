@@ -151,7 +151,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
 				return m, tea.Quit
-			case msg.String() == "escape":
+			case msg.String() == "esc" || msg.String() == "escape":
 				cmd := m.exitEditMode()
 				if cmd != nil {
 					m.loading = true
