@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -44,6 +45,9 @@ func (m AppModel) renderNotesView() string {
 		return m.renderNotesFallback()
 	}
 
+	// Post-process: colorize Eisenhower tags and Obsidian elements
+	rendered = colorizeViewContent(rendered, m.eisenhowerTags)
+
 	return rendered
 }
 
@@ -73,6 +77,43 @@ func stripFrontmatter(content string) string {
 	}
 
 	return strings.Join(result, "\n")
+}
+
+// colorizeViewContent post-processes Glamour output to add Eisenhower tag colors
+// and style Obsidian-specific elements like wiki-links and inline tags.
+func colorizeViewContent(rendered string, tags map[string]string) string {
+	// Colorize Eisenhower tags
+	for tag := range tags {
+		if strings.Contains(rendered, tag) {
+			dc, ok := eisenhowerDisplayColors[tag]
+			if !ok {
+				continue
+			}
+			styled := lipgloss.NewStyle().Foreground(dc).Bold(true).Render(tag)
+			rendered = strings.ReplaceAll(rendered, tag, styled)
+		}
+	}
+
+	// Colorize wiki-links [[text]]
+	wikiRe := regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+	rendered = wikiRe.ReplaceAllStringFunc(rendered, func(match string) string {
+		return lipgloss.NewStyle().Foreground(colorLavender).Render(match)
+	})
+
+	// Colorize standalone tags like #daily #inbox (but not inside headings which are already colored)
+	tagRe := regexp.MustCompile(`(?:^|[ ])#(\w+)`)
+	rendered = tagRe.ReplaceAllStringFunc(rendered, func(match string) string {
+		trimmed := strings.TrimLeft(match, " ")
+		// Skip if it's an Eisenhower tag (already colored above)
+		if _, ok := tags[trimmed]; ok {
+			return match
+		}
+		prefix := match[:len(match)-len(trimmed)]
+		styled := lipgloss.NewStyle().Foreground(colorLavender).Render(trimmed)
+		return prefix + styled
+	})
+
+	return rendered
 }
 
 // renderNotesFallback renders with manual line-by-line styling (used if Glamour fails).

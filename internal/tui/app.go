@@ -196,7 +196,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fileContent = m.editor.Value()
 				m.loading = true
 				cmds = append(cmds, saveFileCmd(m.currentFile, m.fileContent), m.spinner.Tick)
-				m.statusText = "Saved"
 				return m, tea.Batch(cmds...)
 			default:
 				var edCmd tea.Cmd
@@ -224,7 +223,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fileViewContent = m.editor.Value()
 				m.loading = true
 				cmds = append(cmds, saveFileCmd(m.fileViewPath, m.fileViewContent), m.spinner.Tick)
-				m.statusText = "Saved"
 				return m, tea.Batch(cmds...)
 			default:
 				var edCmd tea.Cmd
@@ -448,7 +446,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.statusText = fmt.Sprintf("Error saving: %v", msg.Err)
 		} else {
-			m.statusText = lipgloss.NewStyle().Foreground(colorGreen).Render("✓ Saved")
+			m.statusText = ""
 			if m.lastInserted > 0 {
 				vpHeight := m.viewport.Height()
 				yOffset := m.viewport.YOffset()
