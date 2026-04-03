@@ -16,8 +16,8 @@ A terminal-based interface for managing daily notes in Obsidian vaults. Built wi
 ### From source (requires Go 1.25+)
 
 ```bash
-git clone https://github.com/caneppelevitor/obsidian-cli-go.git
-cd obsidian-cli-go
+git clone https://github.com/caneppelevitor/obsidian-cli.git
+cd obsidian-cli
 
 # Option A: go install (puts binary in ~/go/bin/)
 go install .
@@ -64,6 +64,20 @@ In the daily note input bar, use these prefixes to route content:
 | `-` | Ideas | `- Try using Redis for caching` |
 | `?` | Questions | `? How does the billing system work?` |
 | `!` | Insights | `! The API timeout was causing the issue` |
+
+### Slash Commands
+
+Type these in the daily note input bar:
+
+| Command | Action |
+|---------|--------|
+| `/help` | Show help reference |
+| `/config` | View and edit CLI config |
+| `/save` | Save current file |
+| `/daily` | Reload daily note |
+| `/files` | Switch to file browser |
+| `/open <name>` | Open a file by name |
+| `/exit` | Quit |
 
 ### Keyboard Shortcuts
 
