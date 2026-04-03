@@ -1,11 +1,10 @@
 # Obsidian CLI
 
 A terminal-based interface for managing daily notes in Obsidian vaults. Built with Go and the [Charm](https://charm.sh) ecosystem (Bubble Tea, Lipgloss, Glamour).
+
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/c219bfc9-fb29-463c-9cc6-e58e34f931de" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/f94589b2-60a8-49bd-9bbf-e6a1e8894ffa" />
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/d6bae0f3-1a2c-4792-a060-0b962f6e6848" />
-
-
 
 ## Features
 
