@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -167,6 +168,11 @@ func Load() (AppConfig, error) {
 
 	// Merge user config over defaults
 	merged := mergeConfig(cfg, userCfg)
+
+	// Expand ~ and $HOME in paths
+	merged.Vault.DefaultPath = expandPath(merged.Vault.DefaultPath)
+	merged.Vault.RootPath = expandPath(merged.Vault.RootPath)
+
 	return merged, nil
 }
 
@@ -327,6 +333,19 @@ func mergeConfig(defaults, user AppConfig) AppConfig {
 	}
 
 	return result
+}
+
+func expandPath(path string) string {
+	if path == "" {
+		return path
+	}
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(homeDir(), path[2:])
+	}
+	if path == "~" {
+		return homeDir()
+	}
+	return os.ExpandEnv(path)
 }
 
 func homeDir() string {

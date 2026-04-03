@@ -103,12 +103,12 @@ Generate a sample config:
 obsidian init --sample-config
 ```
 
-Key settings in `~/.obsidian-cli/config.yaml`:
+Key settings in `~/.obsidian-cli/config.yaml` (`~` and `$HOME` are expanded automatically):
 
 ```yaml
 vault:
-  defaultPath: "/path/to/your/vault/daily-notes"
-  rootPath: "/path/to/your/vault"  # File browser root
+  defaultPath: "~/path/to/your/vault/daily-notes"
+  rootPath: "~/path/to/your/vault"  # File browser root
 
 dailyNotes:
   sections: ["Daily Log", "Tasks", "Ideas", "Questions", "Insights", "Links to Expand"]

@@ -121,8 +121,8 @@ const sampleConfigYAML = `# Obsidian CLI Configuration
 # Copy this file to ~/.obsidian-cli/config.yaml
 
 vault:
-  defaultPath: "/path/to/your/vault/daily-notes"
-  rootPath: "/path/to/your/vault"  # Root for file browser (defaults to defaultPath)
+  defaultPath: "~/path/to/your/vault/daily-notes"
+  rootPath: "~/path/to/your/vault"  # Root for file browser (defaults to defaultPath)
 
 logging:
   tasks:
