@@ -206,52 +206,36 @@ func GetVaultRootPath() (string, error) {
 	return cfg.Vault.DefaultPath, nil
 }
 
-// GetTaskLogFile returns the task log filename.
+// GetLogFile returns the log filename for a given log type (task, idea, question, insight).
+func GetLogFile(logType string) (string, error) {
+	defaults := map[string]string{
+		"task":     "tasks-log.md",
+		"idea":     "ideas-log.md",
+		"question": "questions-log.md",
+		"insight":  "insights-log.md",
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		return defaults[logType], err
+	}
+
+	files := map[string]string{
+		"task":     cfg.Logging.Tasks.LogFile,
+		"idea":     cfg.Logging.Ideas.LogFile,
+		"question": cfg.Logging.Questions.LogFile,
+		"insight":  cfg.Logging.Insights.LogFile,
+	}
+
+	if f := files[logType]; f != "" {
+		return f, nil
+	}
+	return defaults[logType], nil
+}
+
+// GetTaskLogFile returns the task log filename. Convenience wrapper around GetLogFile.
 func GetTaskLogFile() (string, error) {
-	cfg, err := Load()
-	if err != nil {
-		return "tasks-log.md", err
-	}
-	if cfg.Logging.Tasks.LogFile == "" {
-		return "tasks-log.md", nil
-	}
-	return cfg.Logging.Tasks.LogFile, nil
-}
-
-// GetIdeasLogFile returns the ideas log filename.
-func GetIdeasLogFile() (string, error) {
-	cfg, err := Load()
-	if err != nil {
-		return "ideas-log.md", err
-	}
-	if cfg.Logging.Ideas.LogFile == "" {
-		return "ideas-log.md", nil
-	}
-	return cfg.Logging.Ideas.LogFile, nil
-}
-
-// GetQuestionsLogFile returns the questions log filename.
-func GetQuestionsLogFile() (string, error) {
-	cfg, err := Load()
-	if err != nil {
-		return "questions-log.md", err
-	}
-	if cfg.Logging.Questions.LogFile == "" {
-		return "questions-log.md", nil
-	}
-	return cfg.Logging.Questions.LogFile, nil
-}
-
-// GetInsightsLogFile returns the insights log filename.
-func GetInsightsLogFile() (string, error) {
-	cfg, err := Load()
-	if err != nil {
-		return "insights-log.md", err
-	}
-	if cfg.Logging.Insights.LogFile == "" {
-		return "insights-log.md", nil
-	}
-	return cfg.Logging.Insights.LogFile, nil
+	return GetLogFile("task")
 }
 
 // GetEisenhowerTags returns the Eisenhower tag color map.

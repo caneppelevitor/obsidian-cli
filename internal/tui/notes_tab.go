@@ -9,8 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/charmbracelet/glamour"
-
 	"github.com/caneppelevitor/obsidian-cli/internal/config"
 	"github.com/caneppelevitor/obsidian-cli/internal/content"
 	"github.com/caneppelevitor/obsidian-cli/internal/vault"
@@ -30,12 +28,7 @@ func (m AppModel) renderNotesView() string {
 		width = 40
 	}
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dark"),
-		glamour.WithWordWrap(width),
-		glamour.WithEmoji(),
-		glamour.WithPreservedNewLines(),
-	)
+	renderer, err := newGlamourRenderer(width, true)
 	if err != nil {
 		return m.renderNotesFallback()
 	}

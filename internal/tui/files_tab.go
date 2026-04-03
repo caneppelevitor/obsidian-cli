@@ -192,59 +192,16 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 			return FilePreviewMsg{Name: name, Content: "Error reading file"}
 		}
 
-		// Gather metadata
-		stat, _ := os.Stat(fullPath)
-		modTime := ""
-		size := ""
-		if stat != nil {
-			modTime = stat.ModTime().Format("2006-01-02 15:04")
-			size = formatFileSize(stat.Size())
-		}
-
-		words := len(regexp.MustCompile(`\S+`).FindAllString(content, -1))
-		lines := strings.Count(content, "\n") + 1
-
-		// Extract sections
-		var sections []string
-		for _, line := range strings.Split(content, "\n") {
-			if strings.HasPrefix(line, "## ") {
-				sections = append(sections, strings.TrimPrefix(line, "## "))
-			}
-		}
-
-		// Extract tags
-		var tags []string
-		tagRe := regexp.MustCompile(`#\w+`)
-		for _, match := range tagRe.FindAllString(content, -1) {
-			if match != "#daily" && match != "#inbox" {
-				found := false
-				for _, t := range tags {
-					if t == match {
-						found = true
-						break
-					}
-				}
-				if !found {
-					tags = append(tags, match)
-				}
-			}
-		}
-		if strings.Contains(content, "#daily") {
-			tags = append([]string{"#daily"}, tags...)
-		}
-		if strings.Contains(content, "#inbox") {
-			tags = append(tags, "#inbox")
-		}
-
+		meta := extractFileMetadata(fullPath, content)
 		return FilePreviewMsg{
 			Name:      name,
 			Content:   content,
-			WordCount: words,
-			LineCount: lines,
-			ModTime:   modTime,
-			Size:      size,
-			Sections:  sections,
-			Tags:      tags,
+			WordCount: meta.WordCount,
+			LineCount: meta.LineCount,
+			ModTime:   meta.ModTime,
+			Size:      meta.Size,
+			Sections:  meta.Sections,
+			Tags:      meta.Tags,
 		}
 	}
 }
@@ -315,11 +272,7 @@ func (m AppModel) renderFilePreview(width, height int) string {
 		content = strings.Join(srcLines, "\n")
 	}
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dark"),
-		glamour.WithWordWrap(width),
-		glamour.WithEmoji(),
-	)
+	renderer, err := newGlamourRenderer(width, false)
 	if err != nil {
 		return content
 	}
@@ -424,12 +377,7 @@ func (m AppModel) renderFileViewContent() string {
 		width = 40
 	}
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dark"),
-		glamour.WithWordWrap(width),
-		glamour.WithEmoji(),
-		glamour.WithPreservedNewLines(),
-	)
+	renderer, err := newGlamourRenderer(width, true)
 	if err != nil {
 		return content
 	}
@@ -560,6 +508,60 @@ type filePreviewMetadata struct {
 type dirStats struct {
 	Folders int
 	Files   int
+}
+
+// extractFileMetadata gathers word count, line count, sections, tags, and file stats
+// from a file's content and path. Pure extraction — no rendering.
+func extractFileMetadata(fullPath, content string) filePreviewMetadata {
+	stat, _ := os.Stat(fullPath)
+	modTime := ""
+	size := ""
+	if stat != nil {
+		modTime = stat.ModTime().Format("2006-01-02 15:04")
+		size = formatFileSize(stat.Size())
+	}
+
+	words := len(regexp.MustCompile(`\S+`).FindAllString(content, -1))
+	lines := strings.Count(content, "\n") + 1
+
+	var sections []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			sections = append(sections, strings.TrimPrefix(line, "## "))
+		}
+	}
+
+	var tags []string
+	seen := map[string]bool{}
+	tagRe := regexp.MustCompile(`#\w+`)
+	for _, match := range tagRe.FindAllString(content, -1) {
+		if !seen[match] {
+			seen[match] = true
+			tags = append(tags, match)
+		}
+	}
+
+	return filePreviewMetadata{
+		WordCount: words,
+		LineCount: lines,
+		ModTime:   modTime,
+		Size:      size,
+		Sections:  sections,
+		Tags:      tags,
+	}
+}
+
+// newGlamourRenderer creates a configured Glamour markdown renderer.
+func newGlamourRenderer(width int, preserveNewLines bool) (*glamour.TermRenderer, error) {
+	opts := []glamour.TermRendererOption{
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(width),
+		glamour.WithEmoji(),
+	}
+	if preserveNewLines {
+		opts = append(opts, glamour.WithPreservedNewLines())
+	}
+	return glamour.NewTermRenderer(opts...)
 }
 
 func formatFileSize(size int64) string {

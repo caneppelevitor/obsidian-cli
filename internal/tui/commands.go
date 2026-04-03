@@ -111,7 +111,7 @@ func completeTaskCmd(vaultPath string, taskIndex int, allTasks []tasks.Task) tea
 
 func logEntryCmd(vaultPath, currentFile, rawContent, logType string) tea.Cmd {
 	return func() tea.Msg {
-		cfg, err := config.Load()
+		logFile, err := config.GetLogFile(logType)
 		if err != nil {
 			return LoggedMsg{Err: err}
 		}
@@ -121,51 +121,39 @@ func logEntryCmd(vaultPath, currentFile, rawContent, logType string) tea.Cmd {
 			sourceFile = strings.TrimSuffix(filepath.Base(currentFile), ".md")
 		}
 
-		var logFile, header string
-		var predicate func(string) bool
-
-		switch logType {
-		case "task":
-			logFile = cfg.Logging.Tasks.LogFile
-			header = "# Task Log\n\nCentralized log of all tasks created across daily notes.\n\n"
-			predicate = func(line string) bool {
-				trimmed := strings.TrimSpace(line)
-				return strings.HasPrefix(trimmed, "- [ ]") || strings.HasPrefix(trimmed, "- [x]")
-			}
-		case "idea":
-			logFile = cfg.Logging.Ideas.LogFile
-			header = "# Ideas Log\n\nCentralized log of all ideas captured across daily notes.\n\n"
-			predicate = func(line string) bool {
-				trimmed := strings.TrimSpace(line)
-				return strings.HasPrefix(trimmed, "- ") && !strings.Contains(line, "[ ]") && !strings.Contains(line, "[x]")
-			}
-		case "question":
-			logFile = cfg.Logging.Questions.LogFile
-			header = "# Questions Log\n\nCentralized log of all questions captured across daily notes.\n\n"
-			predicate = func(line string) bool {
-				trimmed := strings.TrimSpace(line)
-				return strings.HasPrefix(trimmed, "- ") && !strings.Contains(line, "[ ]") && !strings.Contains(line, "[x]")
-			}
-		case "insight":
-			logFile = cfg.Logging.Insights.LogFile
-			header = "# Insights Log\n\nCentralized log of all insights captured across daily notes.\n\n"
-			predicate = func(line string) bool {
-				trimmed := strings.TrimSpace(line)
-				return strings.HasPrefix(trimmed, "- ") && !strings.Contains(line, "[ ]") && !strings.Contains(line, "[x]")
-			}
-		default:
+		// Log type metadata
+		headers := map[string]string{
+			"task":     "# Task Log\n\nCentralized log of all tasks created across daily notes.\n\n",
+			"idea":     "# Ideas Log\n\nCentralized log of all ideas captured across daily notes.\n\n",
+			"question": "# Questions Log\n\nCentralized log of all questions captured across daily notes.\n\n",
+			"insight":  "# Insights Log\n\nCentralized log of all insights captured across daily notes.\n\n",
+		}
+		header, ok := headers[logType]
+		if !ok {
 			return LoggedMsg{Err: fmt.Errorf("unknown log type: %s", logType)}
 		}
 
-		logPath := filepath.Join(vaultPath, logFile)
-
-		var entry string
-		if logType == "task" {
-			entry = fmt.Sprintf("- [ ] %s *[[%s]]*", rawContent, sourceFile)
-		} else {
-			entry = fmt.Sprintf("- %s *[[%s]]*", rawContent, sourceFile)
+		// Tasks use checkbox predicate, everything else uses bullet predicate
+		isTaskLine := func(line string) bool {
+			trimmed := strings.TrimSpace(line)
+			return strings.HasPrefix(trimmed, "- [ ]") || strings.HasPrefix(trimmed, "- [x]")
+		}
+		isBulletLine := func(line string) bool {
+			trimmed := strings.TrimSpace(line)
+			return strings.HasPrefix(trimmed, "- ") && !strings.Contains(line, "[ ]") && !strings.Contains(line, "[x]")
 		}
 
+		var entry string
+		var predicate func(string) bool
+		if logType == "task" {
+			entry = fmt.Sprintf("- [ ] %s *[[%s]]*", rawContent, sourceFile)
+			predicate = isTaskLine
+		} else {
+			entry = fmt.Sprintf("- %s *[[%s]]*", rawContent, sourceFile)
+			predicate = isBulletLine
+		}
+
+		logPath := filepath.Join(vaultPath, logFile)
 		err = vault.LogToCentralFile(logPath, entry, header, predicate)
 		return LoggedMsg{Err: err}
 	}
