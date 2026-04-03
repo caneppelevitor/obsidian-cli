@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 
+	"github.com/caneppelevitor/obsidian-cli/internal/config"
 	"github.com/caneppelevitor/obsidian-cli/internal/content"
 	"github.com/caneppelevitor/obsidian-cli/internal/vault"
 )
@@ -153,8 +154,8 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 		return loadFileCmd(m.currentFile)
 
 	case cmd == "help":
-		m.fileContent = helpText
-		m.viewport.SetContent(m.renderNotesContent())
+		m.showingHelp = true
+		m.viewport.SetContent(helpText)
 		return nil
 
 	case cmd == "view", cmd == "files":
@@ -164,6 +165,14 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 			return tea.Batch(m.loadFileList(), m.spinner.Tick)
 		}
 		return nil
+
+	case cmd == "config":
+		configPath := config.ConfigFile
+		m.activeTab = tabFiles
+		return func() tea.Msg {
+			data, err := vault.ReadFile(configPath)
+			return FileViewLoadedMsg{Content: data, Path: configPath, Err: err}
+		}
 
 	case strings.HasPrefix(cmd, "open "):
 		return m.handleOpenFile(strings.TrimSpace(cmd[5:]))
@@ -246,6 +255,7 @@ const helpText = `
 Commands:
   /save      Save current file
   /daily     Reload daily note
+  /config    View and edit CLI config
   /help      Show this help
   /exit      Exit the application
 

@@ -43,6 +43,7 @@ type AppModel struct {
 	// State
 	activeTab      int
 	vaultPath      string
+	vaultRootPath  string // root path for file browser (may differ from vaultPath)
 	currentFile    string
 	fileContent    string
 	lastInserted   int
@@ -51,8 +52,15 @@ type AppModel struct {
 	statusText     string
 	loading        bool
 	editMode       bool
+	showingHelp    bool
 	taskCursor         int
 	fileListReady      bool
+	currentDir         string // current directory in file browser (relative to vaultRootPath)
+	fileFuzzyMode      bool   // true = global fuzzy search, false = directory browse
+	fileViewMode       bool   // true = viewing a file full-screen in Files tab
+	fileViewPath       string // path of the file being viewed in Files tab
+	fileViewContent    string // content of the file being viewed
+	fileEditMode       bool   // true = editing the viewed file
 	filePreviewContent string
 	filePreviewName    string
 	filePreviewMeta    filePreviewMetadata
@@ -71,6 +79,10 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 	ti.CharLimit = 500
 
 	tags, _ := config.GetEisenhowerTags()
+	vaultRoot, _ := config.GetVaultRootPath()
+	if vaultRoot == "" {
+		vaultRoot = vaultPath
+	}
 
 	h := help.New()
 	h.ShowAll = false
@@ -83,6 +95,19 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 	ed.ShowLineNumbers = true
 	ed.CharLimit = 0
 	ed.Blur()
+
+	// Customize editor styles: remove cursor line highlight, add text color
+	edStyles := ed.Styles()
+	edStyles.Focused.CursorLine = lipgloss.NewStyle()
+	edStyles.Focused.CursorLineNumber = lipgloss.NewStyle().Foreground(colorBlue)
+	edStyles.Focused.Text = lipgloss.NewStyle().Foreground(colorText)
+	edStyles.Focused.LineNumber = lipgloss.NewStyle().Foreground(colorOverlay)
+	edStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(colorSurface1)
+	edStyles.Blurred.CursorLine = lipgloss.NewStyle()
+	edStyles.Blurred.Text = lipgloss.NewStyle().Foreground(colorSubtext)
+	edStyles.Blurred.LineNumber = lipgloss.NewStyle().Foreground(colorOverlay)
+	edStyles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorSurface1)
+	ed.SetStyles(edStyles)
 
 	prog := progress.New(
 		progress.WithWidth(20),
@@ -100,6 +125,7 @@ func NewApp(vaultPath, filePath, fileContent string) AppModel {
 		keys:           DefaultKeyMap(),
 		activeTab:      tabNotes,
 		vaultPath:      vaultPath,
+		vaultRootPath:  vaultRoot,
 		currentFile:    filePath,
 		fileContent:    fileContent,
 		eisenhowerTags: tags,
@@ -148,7 +174,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.fileList.SetSize(listWidth, viewportHeight-2)
 		}
-		if m.editMode {
+		if m.editMode || m.fileEditMode {
 			m.editor.SetWidth(m.width - 4)
 			m.editor.SetHeight(viewportHeight)
 		}
@@ -177,6 +203,68 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editor, edCmd = m.editor.Update(msg)
 				if edCmd != nil {
 					cmds = append(cmds, edCmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
+		}
+
+		// File edit mode in Files tab
+		if m.fileEditMode {
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
+			case msg.String() == "esc" || msg.String() == "escape":
+				cmd := m.exitFileEditMode()
+				if cmd != nil {
+					m.loading = true
+					cmds = append(cmds, cmd, m.spinner.Tick)
+				}
+				return m, tea.Batch(cmds...)
+			case msg.String() == "ctrl+s":
+				m.fileViewContent = m.editor.Value()
+				m.loading = true
+				cmds = append(cmds, saveFileCmd(m.fileViewPath, m.fileViewContent), m.spinner.Tick)
+				m.statusText = "Saved"
+				return m, tea.Batch(cmds...)
+			default:
+				var edCmd tea.Cmd
+				m.editor, edCmd = m.editor.Update(msg)
+				if edCmd != nil {
+					cmds = append(cmds, edCmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
+		}
+
+		// File view mode in Files tab
+		if m.fileViewMode {
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
+			case msg.String() == "esc" || msg.String() == "escape":
+				m.exitFileViewMode()
+				return m, nil
+			case msg.String() == "e":
+				cmd := m.enterFileEditMode()
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
+			case key.Matches(msg, m.keys.Tab):
+				m.exitFileViewMode()
+				m.activeTab = (m.activeTab + 1) % 3
+				m.viewport.SetContent(m.renderContent())
+				if m.activeTab == tabTasks {
+					m.loading = true
+					cmds = append(cmds, loadTasksCmd(m.vaultPath), m.spinner.Tick)
+				}
+				return m, tea.Batch(cmds...)
+			default:
+				// Forward scroll keys to viewport
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				if vpCmd != nil {
+					cmds = append(cmds, vpCmd)
 				}
 				return m, tea.Batch(cmds...)
 			}
@@ -221,11 +309,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case key.Matches(msg, m.keys.Tab):
 				m.activeTab = (m.activeTab + 1) % 3
+				m.fileFuzzyMode = false
 				m.viewport.SetContent(m.renderContent())
 				if m.activeTab == tabTasks {
 					m.loading = true
 					cmds = append(cmds, loadTasksCmd(m.vaultPath), m.spinner.Tick)
 				}
+				return m, tea.Batch(cmds...)
+			case msg.String() == "/" && !m.fileFuzzyMode && !m.fileList.SettingFilter():
+				// Enter global fuzzy search mode
+				m.fileFuzzyMode = true
+				m.loading = true
+				cmds = append(cmds, m.loadAllFiles(), m.spinner.Tick)
+				return m, tea.Batch(cmds...)
+			case (msg.String() == "esc" || msg.String() == "escape") && m.fileFuzzyMode && !m.fileList.SettingFilter():
+				// Exit fuzzy mode, return to directory browser
+				m.fileFuzzyMode = false
+				m.fileListReady = false
+				m.lastPreviewedFile = ""
+				m.filePreviewContent = ""
+				m.filePreviewName = ""
+				m.loading = true
+				cmds = append(cmds, m.loadFileList(), m.spinner.Tick)
 				return m, tea.Batch(cmds...)
 			case msg.String() == "enter":
 				cmd := m.handleFileSelection()
@@ -253,6 +358,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
+		// Dismiss help view
+		if m.showingHelp && (msg.String() == "esc" || msg.String() == "escape") {
+			m.showingHelp = false
+			m.viewport.SetContent(m.renderContent())
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -274,6 +386,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 
 		case key.Matches(msg, m.keys.Submit):
+			m.showingHelp = false
 			value := m.input.Value()
 			if strings.TrimSpace(value) != "" {
 				cmd := m.handleInput(value)
@@ -283,7 +396,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.input.Reset()
-			m.viewport.SetContent(m.renderContent())
+			if !m.showingHelp {
+				m.viewport.SetContent(m.renderContent())
+			}
 			return m, tea.Batch(cmds...)
 
 		case key.Matches(msg, m.keys.Clear):
@@ -347,7 +462,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.lastInserted = 0
 			}
-			m.viewport.SetContent(m.renderContent())
+			if m.fileViewMode {
+				m.viewport.SetContent(m.renderFileViewContent())
+			} else {
+				m.viewport.SetContent(m.renderContent())
+			}
 		}
 
 	case FileLoadedMsg:
@@ -384,21 +503,62 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case FileListMsg:
 		m.loading = false
-		if len(msg.Files) > 0 {
-			viewportHeight := m.height - 7
-			if viewportHeight < 1 {
-				viewportHeight = 10
-			}
-			listWidth := (m.width - 4) * 55 / 100
-			if listWidth < 20 {
-				listWidth = 20
-			}
-			m.fileList = newFileList(msg.Files, listWidth, viewportHeight-2)
-			m.fileListReady = true
-			// Load preview for first file
-			cmds = append(cmds, m.loadFilePreview())
+		m.currentDir = msg.Dir
+		viewportHeight := m.height - 7
+		if viewportHeight < 1 {
+			viewportHeight = 10
+		}
+		listWidth := (m.width - 4) * 55 / 100
+		if listWidth < 20 {
+			listWidth = 20
+		}
+		atRoot := msg.Dir == "" || msg.Dir == "."
+		m.fileList = newFileList(msg.Entries, msg.Dir, atRoot, listWidth, viewportHeight-2)
+		m.fileListReady = true
+		m.lastPreviewedFile = ""
+		// Load preview for first item
+		cmds = append(cmds, m.loadFilePreview())
+
+	case AllFilesMsg:
+		m.loading = false
+		viewportHeight := m.height - 7
+		if viewportHeight < 1 {
+			viewportHeight = 10
+		}
+		listWidth := (m.width - 4) * 55 / 100
+		if listWidth < 20 {
+			listWidth = 20
+		}
+		items := make([]list.Item, len(msg.Files))
+		for i, f := range msg.Files {
+			items[i] = FileItem{name: f, isDir: false}
+		}
+		delegate := list.NewDefaultDelegate()
+		delegate.SetHeight(1)
+		delegate.SetSpacing(0)
+		delegate.ShowDescription = false
+		l := list.New(items, delegate, listWidth, viewportHeight-2)
+		l.Title = "Search All Files"
+		l.SetShowHelp(false)
+		l.SetShowStatusBar(true)
+		l.SetFilteringEnabled(true)
+		m.fileList = l
+		m.fileListReady = true
+		m.fileFuzzyMode = true
+		m.lastPreviewedFile = ""
+		// Start filtering immediately
+		m.fileList.FilterInput.Focus()
+
+	case FileViewLoadedMsg:
+		m.loading = false
+		if msg.Err == nil {
+			m.fileViewMode = true
+			m.fileViewPath = msg.Path
+			m.fileViewContent = msg.Content
+			m.fileEditMode = false
+			m.viewport.SetContent(m.renderFileViewContent())
 		} else {
-			m.statusText = "No markdown files found"
+			m.statusText = fmt.Sprintf("Error: %v", msg.Err)
 		}
 
 	case FilePreviewMsg:
@@ -411,6 +571,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Size:      msg.Size,
 			Sections:  msg.Sections,
 			Tags:      msg.Tags,
+			IsDir:     msg.IsDir,
+			DirStats:  msg.DirStats,
 		}
 
 	case StatusMsg:
@@ -457,7 +619,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Update editor when in edit mode (for cursor blink etc.)
-	if m.editMode {
+	if m.editMode || m.fileEditMode {
 		var edCmd tea.Cmd
 		m.editor, edCmd = m.editor.Update(msg)
 		if edCmd != nil {
@@ -488,24 +650,43 @@ func (m AppModel) View() tea.View {
 			Width(m.width - 2).
 			Render(m.editor.View())
 		mainContent = title + "\n" + body
+	case m.activeTab == tabTasks:
+		if m.loading && len(m.tasks) == 0 {
+			viewportHeight := m.height - 5
+			if viewportHeight < 3 {
+				viewportHeight = 3
+			}
+			content := lipgloss.Place(
+				m.width-4, viewportHeight,
+				lipgloss.Center, lipgloss.Center,
+				m.spinner.View()+" Loading tasks...",
+			)
+			mainContent = activeBorderStyle.
+				Width(m.width - 2).
+				Render(content)
+		} else {
+			mainContent = m.renderTasksTab()
+		}
+	case m.activeTab == tabFiles && m.fileEditMode:
+		title := BorderWithTitle("EDITING: "+filepath.Base(m.fileViewPath), m.width-2, true)
+		body := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderTop(false).
+			BorderForeground(colorBlue).
+			Width(m.width - 2).
+			Render(m.editor.View())
+		mainContent = title + "\n" + body
+	case m.activeTab == tabFiles && m.fileViewMode:
+		border := activeBorderStyle
+		vpContent := m.viewport.View()
+		mainContent = border.
+			Width(m.width - 2).
+			Render(vpContent)
 	case m.activeTab == tabFiles && m.fileListReady:
 		mainContent = m.renderFilesTab()
 	default:
 		border := activeBorderStyle
 		vpContent := m.viewport.View()
-
-		// Show centered spinner for initial heavy loads
-		if m.loading && m.activeTab == tabTasks && len(m.tasks) == 0 {
-			viewportHeight := m.height - 5
-			if viewportHeight < 3 {
-				viewportHeight = 3
-			}
-			vpContent = lipgloss.Place(
-				m.width-4, viewportHeight,
-				lipgloss.Center, lipgloss.Center,
-				m.spinner.View()+" Loading tasks...",
-			)
-		}
 
 		mainContent = border.
 			Width(m.width - 2).
@@ -528,7 +709,16 @@ func (m AppModel) View() tea.View {
 			inputLine,
 			statusBar,
 		)
-	} else if m.editMode {
+	} else if m.fileViewMode && !m.fileEditMode {
+		// File view mode in Files tab
+		fileViewStatus := statusBarStyle.Width(m.width).Render(
+			" " + filepath.Base(m.fileViewPath) + "  e edit · esc back · tab switch")
+		result = lipgloss.JoinVertical(lipgloss.Left,
+			tabBar,
+			mainContent,
+			fileViewStatus,
+		)
+	} else if m.editMode || m.fileEditMode {
 		editStatus := statusBarStyle.Width(m.width).Render(
 			" " + renderEditModeIndicator() + "  esc save & exit · ctrl+s save · ctrl+c quit")
 		result = lipgloss.JoinVertical(lipgloss.Left,
@@ -601,8 +791,13 @@ func (m AppModel) buildStatusBar() string {
 			left = prefix + " j/k navigate · Enter complete"
 			right = "tab switch "
 		case tabFiles:
-			left = prefix + " Type to filter · Enter open"
-			right = "tab switch "
+			if m.fileFuzzyMode {
+				left = prefix + " Type to search · Enter open · Esc back"
+				right = "tab switch "
+			} else {
+				left = prefix + " / search all · Enter open/browse"
+				right = "tab switch "
+			}
 		default:
 			left = prefix
 		}

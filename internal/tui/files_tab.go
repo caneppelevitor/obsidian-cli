@@ -16,20 +16,37 @@ import (
 	"github.com/caneppelevitor/obsidian-cli/internal/vault"
 )
 
-// FileItem implements list.Item and list.DefaultItem for the file browser.
+// FileItem implements list.Item for the file/directory browser.
 type FileItem struct {
-	name string
+	name  string
+	isDir bool
 }
 
 func (f FileItem) FilterValue() string { return f.name }
-func (f FileItem) Title() string       { return f.name }
+
+func (f FileItem) Title() string {
+	if f.name == ".." {
+		return "↩ .."
+	}
+	if f.isDir {
+		return "📁 " + f.name
+	}
+	return "   " + f.name
+}
+
 func (f FileItem) Description() string { return "" }
 
-// newFileList creates a list.Model for file browsing.
-func newFileList(files []string, width, height int) list.Model {
-	items := make([]list.Item, len(files))
-	for i, f := range files {
-		items[i] = FileItem{name: f}
+// newFileList creates a list.Model for directory browsing.
+func newFileList(entries []vault.DirEntry, currentDir string, atRoot bool, width, height int) list.Model {
+	var items []list.Item
+
+	// Add parent directory entry when not at vault root
+	if !atRoot {
+		items = append(items, FileItem{name: "..", isDir: true})
+	}
+
+	for _, e := range entries {
+		items = append(items, FileItem{name: e.Name, isDir: e.IsDir})
 	}
 
 	delegate := list.NewDefaultDelegate()
@@ -38,23 +55,80 @@ func newFileList(files []string, width, height int) list.Model {
 	delegate.ShowDescription = false
 
 	l := list.New(items, delegate, width, height)
-	l.Title = "Vault Files"
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
 
+	// Show current directory as title
+	if currentDir == "" || currentDir == "." {
+		l.Title = "/"
+	} else {
+		l.Title = "/" + currentDir
+	}
+
 	return l
 }
 
-// loadFileList loads the file list asynchronously.
-func (m *AppModel) loadFileList() tea.Cmd {
+// AllFilesMsg is sent with all markdown files for fuzzy search mode.
+type AllFilesMsg struct {
+	Files []string
+}
+
+// loadAllFiles loads all markdown files recursively for fuzzy search.
+func (m *AppModel) loadAllFiles() tea.Cmd {
+	rootPath := m.vaultRootPath
 	return func() tea.Msg {
-		files, err := vault.ListMarkdownFiles(m.vaultPath)
+		files, err := vault.ListMarkdownFiles(rootPath)
 		if err != nil {
 			return StatusMsg{Text: fmt.Sprintf("Error listing files: %v", err)}
 		}
-		return FileListMsg{Files: files}
+		return AllFilesMsg{Files: files}
 	}
+}
+
+// loadFileList loads the directory contents asynchronously.
+func (m *AppModel) loadFileList() tea.Cmd {
+	dir := m.currentDir
+	rootPath := m.vaultRootPath
+
+	return func() tea.Msg {
+		fullPath := filepath.Join(rootPath, dir)
+		entries, err := vault.ListDirectory(fullPath)
+		if err != nil {
+			return StatusMsg{Text: fmt.Sprintf("Error listing directory: %v", err)}
+		}
+		return FileListMsg{Entries: entries, Dir: dir}
+	}
+}
+
+// navigateToDir changes the current directory and reloads the file list.
+func (m *AppModel) navigateToDir(dirName string) tea.Cmd {
+	if dirName == ".." {
+		// Go up one level
+		if m.currentDir == "" || m.currentDir == "." {
+			return nil // already at root
+		}
+		m.currentDir = filepath.Dir(m.currentDir)
+		if m.currentDir == "." {
+			m.currentDir = ""
+		}
+	} else {
+		// Go into subdirectory
+		if m.currentDir == "" {
+			m.currentDir = dirName
+		} else {
+			m.currentDir = filepath.Join(m.currentDir, dirName)
+		}
+	}
+
+	// Reset preview state
+	m.filePreviewContent = ""
+	m.filePreviewName = ""
+	m.lastPreviewedFile = ""
+	m.fileListReady = false
+	m.loading = true
+
+	return tea.Batch(m.loadFileList(), m.spinner.Tick)
 }
 
 // loadFilePreview loads preview content for the selected file.
@@ -69,19 +143,57 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 		return nil
 	}
 
+	// Don't preview ".." entry
+	if fileItem.name == ".." {
+		return nil
+	}
+
 	name := fileItem.name
-	vaultPath := m.vaultPath
+	currentDir := m.currentDir
+	rootPath := m.vaultRootPath
+	isDir := fileItem.isDir
+	fuzzyMode := m.fileFuzzyMode
 
 	return func() tea.Msg {
-		filePath := filepath.Join(vaultPath, name)
+		var fullPath string
+		if fuzzyMode {
+			// In fuzzy mode, name is already relative to rootPath
+			fullPath = filepath.Join(rootPath, name)
+		} else if currentDir == "" {
+			fullPath = filepath.Join(rootPath, name)
+		} else {
+			fullPath = filepath.Join(rootPath, currentDir, name)
+		}
 
-		content, err := vault.ReadFile(filePath)
+		if isDir {
+			// For directories, show a summary
+			folders, mdFiles, err := vault.CountDirContents(fullPath)
+			if err != nil {
+				return FilePreviewMsg{Name: name, Content: "Error reading directory"}
+			}
+
+			stat, _ := os.Stat(fullPath)
+			modTime := ""
+			if stat != nil {
+				modTime = stat.ModTime().Format("2006-01-02 15:04")
+			}
+
+			return FilePreviewMsg{
+				Name:      name + "/",
+				Content:   fmt.Sprintf("Directory with %d folders and %d markdown files", folders, mdFiles),
+				ModTime:   modTime,
+				IsDir:     true,
+				DirStats:  dirStats{Folders: folders, Files: mdFiles},
+			}
+		}
+
+		content, err := vault.ReadFile(fullPath)
 		if err != nil {
 			return FilePreviewMsg{Name: name, Content: "Error reading file"}
 		}
 
 		// Gather metadata
-		stat, _ := os.Stat(filePath)
+		stat, _ := os.Stat(fullPath)
 		modTime := ""
 		size := ""
 		if stat != nil {
@@ -105,7 +217,6 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 		tagRe := regexp.MustCompile(`#\w+`)
 		for _, match := range tagRe.FindAllString(content, -1) {
 			if match != "#daily" && match != "#inbox" {
-				// Deduplicate
 				found := false
 				for _, t := range tags {
 					if t == match {
@@ -118,7 +229,6 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 				}
 			}
 		}
-		// Always include #daily and #inbox if present
 		if strings.Contains(content, "#daily") {
 			tags = append([]string{"#daily"}, tags...)
 		}
@@ -139,7 +249,7 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 	}
 }
 
-// handleFileSelection opens the selected file from the list.
+// handleFileSelection opens the selected file or navigates into a directory.
 func (m *AppModel) handleFileSelection() tea.Cmd {
 	selected := m.fileList.SelectedItem()
 	if selected == nil {
@@ -151,9 +261,25 @@ func (m *AppModel) handleFileSelection() tea.Cmd {
 		return nil
 	}
 
-	filePath := filepath.Join(m.vaultPath, fileItem.name)
-	m.activeTab = tabNotes
-	return loadFileCmd(filePath)
+	// Directory navigation (not in fuzzy mode)
+	if fileItem.isDir && !m.fileFuzzyMode {
+		return m.navigateToDir(fileItem.name)
+	}
+
+	// Open file in file viewer
+	var filePath string
+	if m.fileFuzzyMode {
+		filePath = filepath.Join(m.vaultRootPath, fileItem.name)
+	} else if m.currentDir == "" {
+		filePath = filepath.Join(m.vaultRootPath, fileItem.name)
+	} else {
+		filePath = filepath.Join(m.vaultRootPath, m.currentDir, fileItem.name)
+	}
+
+	return func() tea.Msg {
+		data, err := vault.ReadFile(filePath)
+		return FileViewLoadedMsg{Content: data, Path: filePath, Err: err}
+	}
 }
 
 // renderFilePreview renders the Glamour preview of the selected file.
@@ -168,6 +294,16 @@ func (m AppModel) renderFilePreview(width, height int) string {
 	if m.filePreviewContent == "" {
 		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center,
 			dimStyle.Render("Select a file to preview"))
+	}
+
+	// For directories, show a simple centered summary
+	if m.filePreviewMeta.IsDir {
+		stats := m.filePreviewMeta.DirStats
+		folderIcon := lipgloss.NewStyle().Foreground(colorYellow).Render("📁")
+		title := lipgloss.NewStyle().Foreground(colorText).Bold(true).Render(m.filePreviewName)
+		detail := dimStyle.Render(fmt.Sprintf("%d folders · %d files", stats.Folders, stats.Files))
+		content := lipgloss.JoinVertical(lipgloss.Center, "", folderIcon, "", title, "", detail)
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, content)
 	}
 
 	content := stripFrontmatter(m.filePreviewContent)
@@ -218,14 +354,31 @@ func (m AppModel) renderFileDetails(width, height int) string {
 	lines = append(lines, nameStyle.Render(" "+m.filePreviewName))
 	lines = append(lines, "")
 
+	// For directories, show directory-specific metadata
+	if m.filePreviewMeta.IsDir {
+		stats := m.filePreviewMeta.DirStats
+		if m.filePreviewMeta.ModTime != "" {
+			lines = append(lines, labelStyle.Render(" Modified  ")+valueStyle.Render(m.filePreviewMeta.ModTime))
+		}
+		lines = append(lines, labelStyle.Render(" Folders   ")+valueStyle.Render(fmt.Sprintf("%d", stats.Folders)))
+		lines = append(lines, labelStyle.Render(" MD Files  ")+valueStyle.Render(fmt.Sprintf("%d", stats.Files)))
+		lines = append(lines, "")
+		lines = append(lines, dimStyle.Render(" Enter to browse"))
+
+		if len(lines) > height {
+			lines = lines[:height]
+		}
+		return strings.Join(lines, "\n")
+	}
+
 	if m.filePreviewMeta.ModTime != "" {
-		lines = append(lines, labelStyle.Render(" Modified ")+ valueStyle.Render(m.filePreviewMeta.ModTime))
+		lines = append(lines, labelStyle.Render(" Modified ")+valueStyle.Render(m.filePreviewMeta.ModTime))
 	}
 	if m.filePreviewMeta.Size != "" {
-		lines = append(lines, labelStyle.Render(" Size     ")+ valueStyle.Render(m.filePreviewMeta.Size))
+		lines = append(lines, labelStyle.Render(" Size     ")+valueStyle.Render(m.filePreviewMeta.Size))
 	}
-	lines = append(lines, labelStyle.Render(" Words    ")+ valueStyle.Render(fmt.Sprintf("%d", m.filePreviewMeta.WordCount)))
-	lines = append(lines, labelStyle.Render(" Lines    ")+ valueStyle.Render(fmt.Sprintf("%d", m.filePreviewMeta.LineCount)))
+	lines = append(lines, labelStyle.Render(" Words    ")+valueStyle.Render(fmt.Sprintf("%d", m.filePreviewMeta.WordCount)))
+	lines = append(lines, labelStyle.Render(" Lines    ")+valueStyle.Render(fmt.Sprintf("%d", m.filePreviewMeta.LineCount)))
 
 	if len(m.filePreviewMeta.Sections) > 0 && len(lines) < height-3 {
 		lines = append(lines, "")
@@ -256,6 +409,68 @@ func (m AppModel) renderFileDetails(width, height int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// renderFileViewContent renders the file being viewed full-screen with Glamour.
+func (m AppModel) renderFileViewContent() string {
+	if m.fileViewContent == "" {
+		return "File is empty"
+	}
+
+	content := stripFrontmatter(m.fileViewContent)
+
+	width := m.width - 6
+	if width < 40 {
+		width = 40
+	}
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStylePath("dark"),
+		glamour.WithWordWrap(width),
+		glamour.WithEmoji(),
+		glamour.WithPreservedNewLines(),
+	)
+	if err != nil {
+		return content
+	}
+
+	rendered, err := renderer.Render(content)
+	if err != nil {
+		return content
+	}
+
+	return rendered
+}
+
+// enterFileEditMode switches to textarea editing in Files tab.
+func (m *AppModel) enterFileEditMode() tea.Cmd {
+	m.fileEditMode = true
+	m.editor.SetValue(m.fileViewContent)
+
+	viewportHeight := m.height - 5
+	if viewportHeight < 5 {
+		viewportHeight = 5
+	}
+	m.editor.SetWidth(m.width - 4)
+	m.editor.SetHeight(viewportHeight)
+
+	return m.editor.Focus()
+}
+
+// exitFileEditMode saves and returns to file view mode.
+func (m *AppModel) exitFileEditMode() tea.Cmd {
+	m.fileEditMode = false
+	m.fileViewContent = m.editor.Value()
+	m.editor.Blur()
+	m.viewport.SetContent(m.renderFileViewContent())
+	return saveFileCmd(m.fileViewPath, m.fileViewContent)
+}
+
+// exitFileViewMode returns to the file browser.
+func (m *AppModel) exitFileViewMode() {
+	m.fileViewMode = false
+	m.fileViewPath = ""
+	m.fileViewContent = ""
 }
 
 // renderFilesTab renders the complete split-pane files view.
@@ -330,7 +545,7 @@ func (m AppModel) renderFilesTab() string {
 		Render(inner)
 }
 
-// filePreviewMeta holds metadata about the previewed file.
+// filePreviewMetadata holds metadata about the previewed file or directory.
 type filePreviewMetadata struct {
 	WordCount int
 	LineCount int
@@ -338,6 +553,13 @@ type filePreviewMetadata struct {
 	Size      string
 	Sections  []string
 	Tags      []string
+	IsDir     bool
+	DirStats  dirStats
+}
+
+type dirStats struct {
+	Folders int
+	Files   int
 }
 
 func formatFileSize(size int64) string {

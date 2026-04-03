@@ -37,13 +37,23 @@ type TaskCompletedMsg struct{ Err error }
 // LoggedMsg is sent after a log entry is written.
 type LoggedMsg struct{ Err error }
 
+// FileViewLoadedMsg is sent when a file is loaded for viewing in the Files tab.
+type FileViewLoadedMsg struct {
+	Content string
+	Path    string
+	Err     error
+}
+
 // StatusMsg displays a message in the status bar temporarily.
 type StatusMsg struct{ Text string }
 
-// FileListMsg is sent with a list of files in the vault.
-type FileListMsg struct{ Files []string }
+// FileListMsg is sent with a list of entries in the current directory.
+type FileListMsg struct {
+	Entries []vault.DirEntry
+	Dir     string // relative directory path
+}
 
-// FilePreviewMsg is sent with the preview content for a file.
+// FilePreviewMsg is sent with the preview content for a file or directory.
 type FilePreviewMsg struct {
 	Name      string
 	Content   string
@@ -53,6 +63,8 @@ type FilePreviewMsg struct {
 	Size      string
 	Sections  []string
 	Tags      []string
+	IsDir     bool
+	DirStats  dirStats
 }
 
 // Commands

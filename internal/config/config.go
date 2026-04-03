@@ -25,6 +25,7 @@ type AppConfig struct {
 
 type VaultConfig struct {
 	DefaultPath string `yaml:"defaultPath"`
+	RootPath    string `yaml:"rootPath"` // Root for file browser; defaults to defaultPath if empty
 }
 
 type LoggingConfig struct {
@@ -192,6 +193,19 @@ func GetVaultPath() (string, error) {
 	return cfg.Vault.DefaultPath, nil
 }
 
+// GetVaultRootPath returns the vault root path for file browsing.
+// Falls back to defaultPath if rootPath is not set.
+func GetVaultRootPath() (string, error) {
+	cfg, err := Load()
+	if err != nil {
+		return "", err
+	}
+	if cfg.Vault.RootPath != "" {
+		return cfg.Vault.RootPath, nil
+	}
+	return cfg.Vault.DefaultPath, nil
+}
+
 // GetTaskLogFile returns the task log filename.
 func GetTaskLogFile() (string, error) {
 	cfg, err := Load()
@@ -259,6 +273,9 @@ func mergeConfig(defaults, user AppConfig) AppConfig {
 
 	if user.Vault.DefaultPath != "" {
 		result.Vault.DefaultPath = user.Vault.DefaultPath
+	}
+	if user.Vault.RootPath != "" {
+		result.Vault.RootPath = user.Vault.RootPath
 	}
 
 	// Logging
