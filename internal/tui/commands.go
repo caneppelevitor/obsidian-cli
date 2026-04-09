@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -161,7 +160,7 @@ func completeTaskCmd(vaultPath string, taskIndex int, allTasks []tasks.Task) tea
 
 func loadLastCompileTimeCmd(vaultPath string) tea.Cmd {
 	return func() tea.Msg {
-		lastCompilePath := filepath.Join(vaultPath, "System", "last-compile.md")
+		lastCompilePath := vault.LastCompilePath(vaultPath)
 		data, err := vault.ReadFile(lastCompilePath)
 		if err != nil {
 			// File missing is not an error — just means never compiled
@@ -185,15 +184,14 @@ func fetchVaultStatusCmd(vaultPath string, lastCompile *time.Time) tea.Cmd {
 		var status content.VaultStatus
 		status.LastCompile = lastCompile
 
-		wikiInbox := filepath.Join(vaultPath, "Knowledge", "wiki", "_inbox.md")
+		wikiInbox := vault.WikiInboxPath(vaultPath)
 		count, _ := vault.CountUncheckedItems(wikiInbox)
 		status.WikiInboxCount = count
 
-		reviewQueue := filepath.Join(vaultPath, "Knowledge", "zettelkasten", "_review-queue.md")
-		count, _ = vault.CountUncheckedInSection(reviewQueue, "Pending")
+		count, _ = vault.CountUncheckedInSection(vault.ReviewQueuePath(vaultPath), "Pending")
 		status.ReviewQueueCount = count
 
-		rawNotesDir := filepath.Join(vaultPath, "Knowledge", "zettelkasten", "1-raw-notes")
+		rawNotesDir := vault.RawNotesDir(vaultPath)
 		var after time.Time
 		if lastCompile != nil {
 			after = *lastCompile
@@ -241,8 +239,7 @@ func runCompileCmd(vaultPath string) tea.Cmd {
 
 func loadReviewItemsCmd(vaultRootPath string) tea.Cmd {
 	return func() tea.Msg {
-		reviewPath := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
-		data, err := vault.ReadFile(reviewPath)
+		data, err := vault.ReadFile(vault.ReviewQueuePath(vaultRootPath))
 		if err != nil {
 			return ReviewItemsLoadedMsg{Err: err}
 		}
@@ -253,26 +250,7 @@ func loadReviewItemsCmd(vaultRootPath string) tea.Cmd {
 
 func loadReviewPreviewCmd(vaultRootPath, itemName string) tea.Cmd {
 	return func() tea.Msg {
-		zetDir := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten")
-		var found string
-		entries, _ := os.ReadDir(zetDir)
-		for _, sub := range entries {
-			if !sub.IsDir() {
-				continue
-			}
-			candidate := filepath.Join(zetDir, sub.Name(), itemName+".md")
-			if _, err := os.Stat(candidate); err == nil {
-				found = candidate
-				break
-			}
-		}
-		if found == "" {
-			// Try root level
-			candidate := filepath.Join(zetDir, itemName+".md")
-			if _, err := os.Stat(candidate); err == nil {
-				found = candidate
-			}
-		}
+		found := vault.FindFile(vault.ZettelkastenDir(vaultRootPath), itemName)
 		if found == "" {
 			return ReviewPreviewMsg{Name: itemName, Content: "File not found"}
 		}
@@ -286,7 +264,7 @@ func loadReviewPreviewCmd(vaultRootPath, itemName string) tea.Cmd {
 
 func approveReviewItemCmd(vaultRootPath, itemName string) tea.Cmd {
 	return func() tea.Msg {
-		reviewPath := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		reviewPath := vault.ReviewQueuePath(vaultRootPath)
 		data, err := vault.ReadFile(reviewPath)
 		if err != nil {
 			return ReviewActionDoneMsg{Action: "approved", Name: itemName, Err: err}
@@ -299,7 +277,7 @@ func approveReviewItemCmd(vaultRootPath, itemName string) tea.Cmd {
 
 func discardReviewItemCmd(vaultRootPath, itemName string) tea.Cmd {
 	return func() tea.Msg {
-		reviewPath := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		reviewPath := vault.ReviewQueuePath(vaultRootPath)
 		data, err := vault.ReadFile(reviewPath)
 		if err != nil {
 			return ReviewActionDoneMsg{Action: "discarded", Name: itemName, Err: err}
@@ -312,7 +290,7 @@ func discardReviewItemCmd(vaultRootPath, itemName string) tea.Cmd {
 
 func loadCompileResultCmd(vaultPath string) tea.Cmd {
 	return func() tea.Msg {
-		lastCompilePath := filepath.Join(vaultPath, "System", "last-compile.md")
+		lastCompilePath := vault.LastCompilePath(vaultPath)
 		data, err := vault.ReadFile(lastCompilePath)
 		if err != nil {
 			return CompileResultMsg{Err: err}

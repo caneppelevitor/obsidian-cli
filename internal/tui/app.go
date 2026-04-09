@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -185,15 +184,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.viewport.SetWidth(m.width - 2)
 			m.viewport.SetHeight(viewportHeight)
-			if m.showingCompileSummary {
-				m.viewport.SetContent(m.renderCompileSummaryContent())
-			} else if m.reviewMode && m.reviewDraftPath != "" {
-				m.viewport.SetContent(m.renderFileViewContent())
-			} else if m.fileViewMode {
-				m.viewport.SetContent(m.renderFileViewContent())
-			} else {
-				m.viewport.SetContent(m.renderContent())
-			}
+			m.updateViewportContent()
 		}
 
 		if m.fileListReady {
@@ -303,22 +294,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.String() == "enter":
 				if len(m.reviewItems) > 0 && m.reviewCursor < len(m.reviewItems) {
 					item := m.reviewItems[m.reviewCursor]
-					zetDir := filepath.Join(m.vaultRootPath, "Knowledge", "zettelkasten")
 					m.loading = true
 					return m, tea.Batch(func() tea.Msg {
-						// Search recursively for the file in zettelkasten/
-						var found string
-						filepath.WalkDir(zetDir, func(path string, d os.DirEntry, err error) error {
-							if err != nil || d.IsDir() {
-								return nil
-							}
-							base := strings.TrimSuffix(d.Name(), ".md")
-							if base == item.Name {
-								found = path
-								return filepath.SkipAll
-							}
-							return nil
-						})
+						found := vault.FindFile(vault.ZettelkastenDir(m.vaultRootPath), item.Name)
 						if found == "" {
 							return StatusMsg{Text: fmt.Sprintf("Draft not found: %s", item.Name)}
 						}
@@ -638,13 +616,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.lastInserted = 0
 			}
-			if m.reviewMode && m.reviewDraftPath != "" {
-				m.viewport.SetContent(m.renderFileViewContent())
-			} else if m.fileViewMode {
-				m.viewport.SetContent(m.renderFileViewContent())
-			} else {
-				m.viewport.SetContent(m.renderContent())
-			}
+			m.updateViewportContent()
 		}
 
 	case FileLoadedMsg:
@@ -928,15 +900,7 @@ func (m AppModel) View() tea.View {
 	if m.reviewMode {
 		var mainContent string
 		if m.fileEditMode {
-			// Editing a draft
-			title := BorderWithTitle("EDITING: "+filepath.Base(m.reviewDraftPath), m.width-2, true)
-			body := lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderTop(false).
-				BorderForeground(colorBlue).
-				Width(m.width - 2).
-				Render(m.editor.View())
-			mainContent = title + "\n" + body
+			mainContent = m.renderEditBox(filepath.Base(m.reviewDraftPath))
 		} else if m.reviewDraftPath != "" {
 			// Viewing a draft file
 			border := activeBorderStyle
@@ -983,14 +947,7 @@ func (m AppModel) View() tea.View {
 			Width(m.width - 2).
 			Render(spinContent)
 	case m.activeTab == tabNotes && m.editMode:
-		title := BorderWithTitle("EDITING: "+filepath.Base(m.currentFile), m.width-2, true)
-		body := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderTop(false).
-			BorderForeground(colorBlue).
-			Width(m.width - 2).
-			Render(m.editor.View())
-		mainContent = title + "\n" + body
+		mainContent = m.renderEditBox(filepath.Base(m.currentFile))
 	case m.activeTab == tabTasks:
 		if m.loading && len(m.tasks) == 0 {
 			viewportHeight := m.height - 5
@@ -1009,14 +966,7 @@ func (m AppModel) View() tea.View {
 			mainContent = m.renderTasksTab()
 		}
 	case m.activeTab == tabFiles && m.fileEditMode:
-		title := BorderWithTitle("EDITING: "+filepath.Base(m.fileViewPath), m.width-2, true)
-		body := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderTop(false).
-			BorderForeground(colorBlue).
-			Width(m.width - 2).
-			Render(m.editor.View())
-		mainContent = title + "\n" + body
+		mainContent = m.renderEditBox(filepath.Base(m.fileViewPath))
 	case m.activeTab == tabFiles && m.fileViewMode:
 		border := activeBorderStyle
 		vpContent := m.viewport.View()
@@ -1098,6 +1048,32 @@ func (m *AppModel) handleInput(input string) tea.Cmd {
 	return m.handleContentInput(input)
 }
 
+// updateViewportContent sets the viewport content based on current mode.
+// Centralizes the conditional viewport update that was duplicated 5+ times.
+func (m *AppModel) updateViewportContent() {
+	if m.showingCompileSummary {
+		m.viewport.SetContent(m.renderCompileSummaryContent())
+	} else if m.reviewMode && m.reviewDraftPath != "" {
+		m.viewport.SetContent(m.renderFileViewContent())
+	} else if m.fileViewMode {
+		m.viewport.SetContent(m.renderFileViewContent())
+	} else {
+		m.viewport.SetContent(m.renderContent())
+	}
+}
+
+// renderEditBox renders the standard editor box with title border.
+func (m AppModel) renderEditBox(title string) string {
+	titleBar := BorderWithTitle("EDITING: "+title, m.width-2, true)
+	body := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderTop(false).
+		BorderForeground(colorBlue).
+		Width(m.width - 2).
+		Render(m.editor.View())
+	return titleBar + "\n" + body
+}
+
 // renderContent builds the viewport content based on active tab.
 func (m AppModel) renderContent() string {
 	switch m.activeTab {
@@ -1164,268 +1140,11 @@ func (m AppModel) buildStatusBar() string {
 	return leftRendered + filler + rightRendered
 }
 
-// loadReviewPreviewIfNeeded returns a command to load preview if the cursor changed.
-func (m *AppModel) loadReviewPreviewIfNeeded() tea.Cmd {
-	if len(m.reviewItems) == 0 || m.reviewCursor >= len(m.reviewItems) {
-		return nil
-	}
-	name := m.reviewItems[m.reviewCursor].Name
-	if name == m.reviewLastPreviewed {
-		return nil
-	}
-	return loadReviewPreviewCmd(m.vaultRootPath, name)
-}
+// Review list rendering → review_tab.go
+// Compile summary + status overlay rendering → compile_tab.go
 
-// renderReviewList renders the review queue as a split-pane: list left, preview right.
-func (m AppModel) renderReviewList() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	itemStyle := lipgloss.NewStyle().Foreground(colorText)
-	selectedStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
-
-	totalHeight := m.height - 7
-	if totalHeight < 5 {
-		totalHeight = 5
-	}
-	listWidth := (m.width - 4) / 2
-	rightWidth := m.width - 4 - listWidth - 1 // 1 for divider
-
-	// Left pane: review list
-	var listLines []string
-	listLines = append(listLines, titleStyle.Render(fmt.Sprintf(" Review Queue (%d pending)", len(m.reviewItems))))
-	listLines = append(listLines, "")
-
-	for i, item := range m.reviewItems {
-		cursor := "  "
-		style := itemStyle
-		if i == m.reviewCursor {
-			cursor = "▸ "
-			style = selectedStyle
-		}
-		line := fmt.Sprintf(" %s%s", cursor, item.Name)
-		// Truncate if too wide
-		if len(line) > listWidth-1 {
-			line = line[:listWidth-4] + "..."
-		}
-		listLines = append(listLines, style.Render(line))
-	}
-
-	if len(m.reviewItems) == 0 {
-		listLines = append(listLines, dimStyle.Render(" No pending drafts"))
-	}
-
-	leftContent := strings.Join(listLines, "\n")
-	leftPane := lipgloss.NewStyle().
-		Width(listWidth).
-		Height(totalHeight).
-		Render(leftContent)
-
-	// Vertical divider
-	vDivider := lipgloss.NewStyle().
-		Foreground(colorSurface1).
-		Width(1).
-		Height(totalHeight).
-		Render(strings.Repeat("│\n", totalHeight))
-
-	// Right pane: preview
-	previewLabel := lipgloss.NewStyle().Foreground(colorOverlay).Render("─Preview")
-	previewTopBorder := lipgloss.NewStyle().Foreground(colorSurface1).
-		Render("─") + previewLabel +
-		lipgloss.NewStyle().Foreground(colorSurface1).
-			Render(strings.Repeat("─", max(0, rightWidth-lipgloss.Width("─Preview")-1)))
-
-	var previewContent string
-	if m.reviewPreviewContent != "" {
-		// Render with Glamour
-		displayContent := stripFrontmatter(m.reviewPreviewContent)
-		previewWidth := rightWidth - 2
-		if previewWidth < 30 {
-			previewWidth = 30
-		}
-		renderer, err := newGlamourRenderer(previewWidth, true)
-		if err == nil {
-			rendered, err := renderer.Render(displayContent)
-			if err == nil {
-				previewContent = rendered
-			} else {
-				previewContent = displayContent
-			}
-		} else {
-			previewContent = displayContent
-		}
-	} else if len(m.reviewItems) > 0 {
-		previewContent = dimStyle.Render(" Loading preview...")
-	}
-
-	// Truncate preview to fit height
-	previewLines := strings.Split(previewContent, "\n")
-	maxPreviewLines := totalHeight - 2
-	if len(previewLines) > maxPreviewLines {
-		previewLines = previewLines[:maxPreviewLines]
-	}
-	previewContent = strings.Join(previewLines, "\n")
-
-	rightPane := previewTopBorder + "\n" +
-		lipgloss.NewStyle().
-			Width(rightWidth).
-			Height(totalHeight - 1).
-			Render(previewContent)
-
-	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, vDivider, rightPane)
-
-	return activeBorderStyle.
-		Width(m.width - 2).
-		Render(inner)
-}
-
-// renderStatusOverlay renders the vault status overlay.
-func (m AppModel) renderStatusOverlay() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	labelStyle := lipgloss.NewStyle().Foreground(colorText)
-	valueStyle := lipgloss.NewStyle().Foreground(colorText).Bold(true)
-	zeroStyle := lipgloss.NewStyle().Foreground(colorOverlay)
-	footerStyle := lipgloss.NewStyle().Foreground(colorOverlay)
-
-	compileAgo := formatDurationAgo(m.lastCompileTime)
-	compileStyle := labelStyle
-	if m.lastCompileTime == nil || time.Since(*m.lastCompileTime) > 7*24*time.Hour {
-		compileStyle = lipgloss.NewStyle().Foreground(colorYellow)
-	}
-
-	renderMetric := func(label string, count int, unit string) string {
-		if count == 0 {
-			return zeroStyle.Render(fmt.Sprintf("  %s: 0 %s", label, unit))
-		}
-		return labelStyle.Render(fmt.Sprintf("  %s: ", label)) +
-			valueStyle.Render(fmt.Sprintf("%d", count)) +
-			labelStyle.Render(fmt.Sprintf(" %s", unit))
-	}
-
-	var lines []string
-	lines = append(lines, "")
-	lines = append(lines, titleStyle.Render("  Vault Status"))
-	lines = append(lines, "")
-	lines = append(lines, compileStyle.Render(fmt.Sprintf("  Last compile: %s", compileAgo)))
-	lines = append(lines, "")
-
-	if m.vaultStatus != nil {
-		lines = append(lines, renderMetric("Wiki inbox", m.vaultStatus.WikiInboxCount, "unprocessed"))
-		lines = append(lines, renderMetric("Review queue", m.vaultStatus.ReviewQueueCount, "pending drafts"))
-		lines = append(lines, renderMetric("Raw notes", m.vaultStatus.RawNotesSinceCompile, "since last compile"))
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, footerStyle.Render("  Press any key to return"))
-	lines = append(lines, "")
-
-	content := strings.Join(lines, "\n")
-
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBlue).
-		Padding(0, 2).
-		Width(42)
-
-	box := boxStyle.Render(content)
-
-	return lipgloss.Place(m.width, m.height-2,
-		lipgloss.Center, lipgloss.Center, box)
-}
-
-// renderCompileSummary renders the compile summary overlay.
-func (m AppModel) renderCompileSummary() string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorGreen)
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
-	labelStyle := lipgloss.NewStyle().Foreground(colorText)
-	zeroStyle := lipgloss.NewStyle().Foreground(colorOverlay)
-	warnStyle := lipgloss.NewStyle().Foreground(colorYellow)
-
-	var lines []string
-	lines = append(lines, "")
-	lines = append(lines, titleStyle.Render("  Compile Complete"))
-	lines = append(lines, "")
-
-	if m.compileResult == nil {
-		lines = append(lines, labelStyle.Render("  No results available"))
-	} else {
-		renderSection := func(name string, metrics content.SectionMetrics) {
-			lines = append(lines, sectionStyle.Render("  "+name))
-			if metrics.Items == nil || len(metrics.Items) == 0 {
-				lines = append(lines, zeroStyle.Render("    No data"))
-			} else {
-				for k, v := range metrics.Items {
-					style := labelStyle
-					if v == "0" || v == "" {
-						style = zeroStyle
-					}
-					lines = append(lines, style.Render(fmt.Sprintf("    %s: %s", k, v)))
-				}
-			}
-			lines = append(lines, "")
-		}
-
-		renderSection("Wiki", m.compileResult.Wiki)
-		renderSection("Zettelkasten", m.compileResult.Zettelkasten)
-
-		// Lint with warnings
-		lines = append(lines, sectionStyle.Render("  Lint"))
-		if m.compileResult.Lint.Items == nil || len(m.compileResult.Lint.Items) == 0 {
-			lines = append(lines, zeroStyle.Render("    No data"))
-		} else {
-			for k, v := range m.compileResult.Lint.Items {
-				style := labelStyle
-				lower := strings.ToLower(strings.TrimSpace(v))
-				if lower != "none" && lower != "0" && lower != "" {
-					style = warnStyle
-				}
-				lines = append(lines, style.Render(fmt.Sprintf("    %s: %s", k, v)))
-			}
-		}
-		lines = append(lines, "")
-
-		// Suggestions
-		if len(m.compileResult.Suggestions) > 0 {
-			lines = append(lines, sectionStyle.Render("  Suggestions"))
-			for _, s := range m.compileResult.Suggestions {
-				lines = append(lines, labelStyle.Render("    • "+s))
-			}
-			lines = append(lines, "")
-		}
-
-		// Duration
-		if m.compileResult.Frontmatter.DurationSeconds > 0 {
-			lines = append(lines, zeroStyle.Render(fmt.Sprintf("  Duration: %ds", m.compileResult.Frontmatter.DurationSeconds)))
-		}
-	}
-
-	lines = append(lines, "")
-
-	return strings.Join(lines, "\n")
-}
-
-// renderCompileSummaryContent returns the compile summary as scrollable content for the viewport.
-func (m AppModel) renderCompileSummaryContent() string {
-	return m.renderCompileSummary()
-}
-
-// formatDurationAgo returns a human-readable duration since the given time.
-func formatDurationAgo(t *time.Time) string {
-	if t == nil {
-		return "never"
-	}
-	d := time.Since(*t)
-	switch {
-	case d < time.Hour:
-		return "just now"
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
-	case d < 7*24*time.Hour:
-		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	case d < 4*7*24*time.Hour:
-		return fmt.Sprintf("%dw ago", int(d.Hours()/(7*24)))
-	default:
-		return fmt.Sprintf("%dmo ago", int(d.Hours()/(30*24)))
-	}
-}
+// Review list rendering -> review_tab.go
+// Compile summary + status overlay rendering -> compile_tab.go
 
 // Run starts the TUI application.
 func Run(vaultPath, filePath, fileContent string) error {

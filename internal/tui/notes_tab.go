@@ -227,7 +227,7 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 		return tea.Batch(runCompileCmd(m.vaultRootPath), m.spinner.Tick)
 
 	case cmd == "review":
-		reviewPath := filepath.Join(m.vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		reviewPath := vault.ReviewQueuePath(m.vaultRootPath)
 		if _, err := os.Stat(reviewPath); err != nil {
 			m.statusText = "No review queue found"
 			return nil
