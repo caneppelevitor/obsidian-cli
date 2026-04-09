@@ -232,11 +232,12 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 			m.statusText = "No review queue found"
 			return nil
 		}
-		m.activeTab = tabFiles
-		return func() tea.Msg {
-			data, err := vault.ReadFile(reviewPath)
-			return FileViewLoadedMsg{Content: data, Path: reviewPath, Err: err}
-		}
+		m.reviewMode = true
+		m.reviewCursor = 0
+		m.reviewDraftPath = ""
+		m.loading = true
+		m.input.Blur()
+		return tea.Batch(loadReviewItemsCmd(m.vaultRootPath), m.spinner.Tick)
 
 	case strings.HasPrefix(cmd, "open "):
 		return m.handleOpenFile(strings.TrimSpace(cmd[5:]))
@@ -331,6 +332,7 @@ Content Prefixes:
   -   text   Add an idea (bullet)
   ?   text   Add a question (bullet)
   !   text   Add an insight (bullet)
+  @   text   Clip to wiki/raw/
 
 Navigation:
   Tab        Switch between tabs

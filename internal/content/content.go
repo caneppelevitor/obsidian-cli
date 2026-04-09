@@ -168,6 +168,16 @@ func ParseContentInput(input string) *ParsedInput {
 		}
 	}
 
+	if strings.HasPrefix(trimmed, "@") {
+		raw := strings.TrimSpace(trimmed[1:])
+		return &ParsedInput{
+			Section:          "Links to Expand",
+			FormattedContent: fmt.Sprintf("- %s", raw),
+			LogType:          "link",
+			RawContent:       raw,
+		}
+	}
+
 	return nil
 }
 

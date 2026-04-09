@@ -148,6 +148,8 @@ func DetectInputMode(input string) string {
 		return inputModePill("ASK", colorBlue)
 	case strings.HasPrefix(trimmed, "!"):
 		return inputModePill("NOTE", colorMauve)
+	case strings.HasPrefix(trimmed, "@"):
+		return inputModePill("LINK", colorTeal)
 	case strings.HasPrefix(trimmed, "/"):
 		return inputModePill("CMD", colorPeach)
 	default:

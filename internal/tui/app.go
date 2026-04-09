@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 	"github.com/caneppelevitor/obsidian-cli/internal/config"
 	"github.com/caneppelevitor/obsidian-cli/internal/content"
 	"github.com/caneppelevitor/obsidian-cli/internal/tasks"
+	"github.com/caneppelevitor/obsidian-cli/internal/vault"
 )
 
 const (
@@ -67,6 +69,14 @@ type AppModel struct {
 	filePreviewName    string
 	filePreviewMeta    filePreviewMetadata
 	lastPreviewedFile  string
+
+	// Review mode
+	reviewMode           bool
+	reviewItems          []content.ReviewItem
+	reviewCursor         int
+	reviewDraftPath      string // path of draft being viewed (empty = list mode)
+	reviewPreviewContent string // rendered preview of selected item
+	reviewLastPreviewed  string // name of last previewed item (avoids re-loading)
 
 	// Compile & Status
 	showingStatus        bool
@@ -175,7 +185,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.viewport.SetWidth(m.width - 2)
 			m.viewport.SetHeight(viewportHeight)
-			m.viewport.SetContent(m.renderContent())
+			if m.showingCompileSummary {
+				m.viewport.SetContent(m.renderCompileSummaryContent())
+			} else if m.reviewMode && m.reviewDraftPath != "" {
+				m.viewport.SetContent(m.renderFileViewContent())
+			} else if m.fileViewMode {
+				m.viewport.SetContent(m.renderFileViewContent())
+			} else {
+				m.viewport.SetContent(m.renderContent())
+			}
 		}
 
 		if m.fileListReady {
@@ -197,7 +215,136 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.showingCompileSummary {
-			m.showingCompileSummary = false
+			if msg.String() == "esc" || msg.String() == "escape" || msg.String() == "q" {
+				m.showingCompileSummary = false
+				m.viewport.SetContent(m.renderContent())
+				return m, nil
+			}
+			// Forward scroll keys to viewport
+			var vpCmd tea.Cmd
+			m.viewport, vpCmd = m.viewport.Update(msg)
+			if vpCmd != nil {
+				return m, vpCmd
+			}
+			return m, nil
+		}
+
+		// Review mode: list navigation + actions
+		// (skip if editing — let fileEditMode handler below take over)
+		if m.reviewMode && !m.fileEditMode {
+			if m.reviewDraftPath != "" {
+				// Viewing a draft
+				switch {
+				case key.Matches(msg, m.keys.Quit):
+					return m, tea.Quit
+				case msg.String() == "esc" || msg.String() == "escape":
+					m.reviewDraftPath = ""
+					m.fileViewContent = ""
+					return m, nil
+				case msg.String() == "e":
+					// Edit the draft file
+					m.fileEditMode = true
+					m.fileViewPath = m.reviewDraftPath
+					m.editor.SetValue(m.fileViewContent)
+					viewportHeight := m.height - 5
+					if viewportHeight < 5 {
+						viewportHeight = 5
+					}
+					m.editor.SetWidth(m.width - 4)
+					m.editor.SetHeight(viewportHeight)
+					return m, m.editor.Focus()
+				case msg.String() == "a":
+					if len(m.reviewItems) > 0 && m.reviewCursor < len(m.reviewItems) {
+						name := m.reviewItems[m.reviewCursor].Name
+						m.loading = true
+						return m, tea.Batch(approveReviewItemCmd(m.vaultRootPath, name), m.spinner.Tick)
+					}
+					return m, nil
+				case msg.String() == "d":
+					if len(m.reviewItems) > 0 && m.reviewCursor < len(m.reviewItems) {
+						name := m.reviewItems[m.reviewCursor].Name
+						m.loading = true
+						return m, tea.Batch(discardReviewItemCmd(m.vaultRootPath, name), m.spinner.Tick)
+					}
+					return m, nil
+				default:
+					var vpCmd tea.Cmd
+					m.viewport, vpCmd = m.viewport.Update(msg)
+					if vpCmd != nil {
+						cmds = append(cmds, vpCmd)
+					}
+					return m, tea.Batch(cmds...)
+				}
+			}
+			// Review list mode
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
+			case msg.String() == "esc" || msg.String() == "escape":
+				m.reviewMode = false
+				m.reviewItems = nil
+				m.reviewDraftPath = ""
+				m.fileViewContent = ""
+				m.reviewPreviewContent = ""
+				m.reviewLastPreviewed = ""
+				m.viewport.SetContent(m.renderContent())
+				m.input.Focus()
+				return m, nil
+			case msg.String() == "j" || msg.String() == "down":
+				if m.reviewCursor < len(m.reviewItems)-1 {
+					m.reviewCursor++
+				}
+				return m, m.loadReviewPreviewIfNeeded()
+			case msg.String() == "k" || msg.String() == "up":
+				if m.reviewCursor > 0 {
+					m.reviewCursor--
+				}
+				return m, m.loadReviewPreviewIfNeeded()
+			case msg.String() == "enter":
+				if len(m.reviewItems) > 0 && m.reviewCursor < len(m.reviewItems) {
+					item := m.reviewItems[m.reviewCursor]
+					zetDir := filepath.Join(m.vaultRootPath, "Knowledge", "zettelkasten")
+					m.loading = true
+					return m, tea.Batch(func() tea.Msg {
+						// Search recursively for the file in zettelkasten/
+						var found string
+						filepath.WalkDir(zetDir, func(path string, d os.DirEntry, err error) error {
+							if err != nil || d.IsDir() {
+								return nil
+							}
+							base := strings.TrimSuffix(d.Name(), ".md")
+							if base == item.Name {
+								found = path
+								return filepath.SkipAll
+							}
+							return nil
+						})
+						if found == "" {
+							return StatusMsg{Text: fmt.Sprintf("Draft not found: %s", item.Name)}
+						}
+						data, err := vault.ReadFile(found)
+						if err != nil {
+							return StatusMsg{Text: fmt.Sprintf("Error reading draft: %v", err)}
+						}
+						return FileViewLoadedMsg{Content: data, Path: found, Err: nil}
+					}, m.spinner.Tick)
+				}
+				return m, nil
+			case msg.String() == "a":
+				if len(m.reviewItems) > 0 && m.reviewCursor < len(m.reviewItems) {
+					name := m.reviewItems[m.reviewCursor].Name
+					m.loading = true
+					return m, tea.Batch(approveReviewItemCmd(m.vaultRootPath, name), m.spinner.Tick)
+				}
+				return m, nil
+			case msg.String() == "d":
+				if len(m.reviewItems) > 0 && m.reviewCursor < len(m.reviewItems) {
+					name := m.reviewItems[m.reviewCursor].Name
+					m.loading = true
+					return m, tea.Batch(discardReviewItemCmd(m.vaultRootPath, name), m.spinner.Tick)
+				}
+				return m, nil
+			}
 			return m, nil
 		}
 
@@ -228,12 +375,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// File edit mode in Files tab
+		// File edit mode in Files tab (or review draft edit)
 		if m.fileEditMode {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
 				return m, tea.Quit
 			case msg.String() == "esc" || msg.String() == "escape":
+				if m.reviewMode {
+					// Save and return to review draft view
+					m.fileEditMode = false
+					m.fileViewContent = m.editor.Value()
+					m.editor.Blur()
+					m.loading = true
+					cmds = append(cmds, saveFileCmd(m.reviewDraftPath, m.fileViewContent), m.spinner.Tick)
+					m.viewport.SetContent(m.renderFileViewContent())
+					return m, tea.Batch(cmds...)
+				}
 				cmd := m.exitFileEditMode()
 				if cmd != nil {
 					m.loading = true
@@ -481,7 +638,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.lastInserted = 0
 			}
-			if m.fileViewMode {
+			if m.reviewMode && m.reviewDraftPath != "" {
+				m.viewport.SetContent(m.renderFileViewContent())
+			} else if m.fileViewMode {
 				m.viewport.SetContent(m.renderFileViewContent())
 			} else {
 				m.viewport.SetContent(m.renderContent())
@@ -571,13 +730,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case FileViewLoadedMsg:
 		m.loading = false
 		if msg.Err == nil {
-			m.fileViewMode = true
-			m.fileViewPath = msg.Path
-			m.fileViewContent = msg.Content
-			m.fileEditMode = false
-			m.viewport.SetContent(m.renderFileViewContent())
+			if m.reviewMode {
+				// In review mode, render draft in viewport without entering file view mode
+				m.reviewDraftPath = msg.Path
+				m.fileViewContent = msg.Content
+				m.viewport.SetContent(m.renderFileViewContent())
+			} else {
+				m.fileViewMode = true
+				m.fileViewPath = msg.Path
+				m.fileViewContent = msg.Content
+				m.fileEditMode = false
+				m.viewport.SetContent(m.renderFileViewContent())
+			}
 		} else {
-			m.statusText = fmt.Sprintf("Error: %v", msg.Err)
+			if m.reviewMode {
+				m.reviewDraftPath = ""
+				m.statusText = fmt.Sprintf("Draft not found: %s", filepath.Base(msg.Path))
+			} else {
+				m.statusText = fmt.Sprintf("Error: %v", msg.Err)
+			}
 		}
 
 	case FilePreviewMsg:
@@ -630,8 +801,43 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil && msg.Result != nil {
 			m.compileResult = msg.Result
 			m.showingCompileSummary = true
+			m.viewport.SetContent(m.renderCompileSummaryContent())
+			m.viewport.SetYOffset(0)
 		} else if msg.Err != nil {
 			m.statusText = fmt.Sprintf("Error parsing compile results: %v", msg.Err)
+		}
+
+	case ReviewItemsLoadedMsg:
+		m.loading = false
+		if msg.Err != nil {
+			m.statusText = fmt.Sprintf("Error loading review queue: %v", msg.Err)
+			m.reviewMode = false
+		} else if len(msg.Items) == 0 {
+			m.statusText = "No pending drafts"
+			m.reviewMode = false
+		} else {
+			m.reviewItems = msg.Items
+			if m.reviewCursor >= len(msg.Items) {
+				m.reviewCursor = max(0, len(msg.Items)-1)
+			}
+			m.reviewPreviewContent = ""
+			m.reviewLastPreviewed = ""
+			cmds = append(cmds, m.loadReviewPreviewIfNeeded())
+		}
+
+	case ReviewPreviewMsg:
+		m.reviewPreviewContent = msg.Content
+		m.reviewLastPreviewed = msg.Name
+
+	case ReviewActionDoneMsg:
+		m.loading = false
+		if msg.Err != nil {
+			m.statusText = fmt.Sprintf("Error: %v", msg.Err)
+		} else {
+			action := strings.ToUpper(msg.Action[:1]) + msg.Action[1:]
+			m.statusText = fmt.Sprintf("%s: %s", action, msg.Name)
+			m.reviewDraftPath = ""
+			cmds = append(cmds, loadReviewItemsCmd(m.vaultRootPath))
 		}
 
 	case StatusMsg:
@@ -650,8 +856,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update text input (only when not on files tab)
-	if m.activeTab != tabFiles {
+	// Update text input (only when not on files tab or review mode)
+	if m.activeTab != tabFiles && !m.reviewMode {
 		var inputCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
 		if inputCmd != nil {
@@ -659,8 +865,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update viewport (only when not on files tab)
-	if m.activeTab != tabFiles {
+	// Update viewport (only when not on files tab or review mode)
+	if m.activeTab != tabFiles && !m.reviewMode {
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		if vpCmd != nil {
@@ -694,6 +900,9 @@ func (m AppModel) View() tea.View {
 		return tea.NewView("Initializing...")
 	}
 
+	tabs := []string{"Daily Note", "Tasks", "Files"}
+	tabBar := RenderTabBar(tabs, m.activeTab, m.width)
+
 	// Full-screen overlays
 	if m.showingStatus {
 		v := tea.NewView(m.renderStatusOverlay())
@@ -701,13 +910,61 @@ func (m AppModel) View() tea.View {
 		return v
 	}
 	if m.showingCompileSummary {
-		v := tea.NewView(m.renderCompileSummary())
+		border := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorGreen).
+			Width(m.width - 2)
+		mainContent := border.Render(m.viewport.View())
+		statusBar := statusBarStyle.Width(m.width).Render(
+			" Compile Summary  j/k scroll · Esc back")
+		result := lipgloss.JoinVertical(lipgloss.Left, tabBar, mainContent, statusBar)
+		v := tea.NewView(result)
 		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion
 		return v
 	}
 
-	tabs := []string{"Daily Note", "Tasks", "Files"}
-	tabBar := RenderTabBar(tabs, m.activeTab, m.width)
+	// Review mode rendering
+	if m.reviewMode {
+		var mainContent string
+		if m.fileEditMode {
+			// Editing a draft
+			title := BorderWithTitle("EDITING: "+filepath.Base(m.reviewDraftPath), m.width-2, true)
+			body := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderTop(false).
+				BorderForeground(colorBlue).
+				Width(m.width - 2).
+				Render(m.editor.View())
+			mainContent = title + "\n" + body
+		} else if m.reviewDraftPath != "" {
+			// Viewing a draft file
+			border := activeBorderStyle
+			vpContent := m.viewport.View()
+			mainContent = border.Width(m.width - 2).Render(vpContent)
+		} else {
+			mainContent = m.renderReviewList()
+		}
+
+		var statusBar string
+		if m.fileEditMode {
+			statusBar = statusBarStyle.Width(m.width).Render(
+				" " + renderEditModeIndicator() + "  esc save & exit · ctrl+s save")
+		} else if m.reviewDraftPath != "" {
+			statusBar = statusBarStyle.Width(m.width).Render(
+				" " + filepath.Base(m.reviewDraftPath) + "  e edit · a approve · d discard · Esc back to list")
+		} else {
+			statusBar = m.buildStatusBar()
+		}
+
+		result := lipgloss.JoinVertical(lipgloss.Left, tabBar, mainContent, statusBar)
+		v := tea.NewView(result)
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion
+		v.ReportFocus = true
+		v.WindowTitle = "Obsidian: Review Queue"
+		return v
+	}
 
 	// Main content area with active/inactive borders
 	var mainContent string
@@ -907,6 +1164,119 @@ func (m AppModel) buildStatusBar() string {
 	return leftRendered + filler + rightRendered
 }
 
+// loadReviewPreviewIfNeeded returns a command to load preview if the cursor changed.
+func (m *AppModel) loadReviewPreviewIfNeeded() tea.Cmd {
+	if len(m.reviewItems) == 0 || m.reviewCursor >= len(m.reviewItems) {
+		return nil
+	}
+	name := m.reviewItems[m.reviewCursor].Name
+	if name == m.reviewLastPreviewed {
+		return nil
+	}
+	return loadReviewPreviewCmd(m.vaultRootPath, name)
+}
+
+// renderReviewList renders the review queue as a split-pane: list left, preview right.
+func (m AppModel) renderReviewList() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	itemStyle := lipgloss.NewStyle().Foreground(colorText)
+	selectedStyle := lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
+
+	totalHeight := m.height - 7
+	if totalHeight < 5 {
+		totalHeight = 5
+	}
+	listWidth := (m.width - 4) / 2
+	rightWidth := m.width - 4 - listWidth - 1 // 1 for divider
+
+	// Left pane: review list
+	var listLines []string
+	listLines = append(listLines, titleStyle.Render(fmt.Sprintf(" Review Queue (%d pending)", len(m.reviewItems))))
+	listLines = append(listLines, "")
+
+	for i, item := range m.reviewItems {
+		cursor := "  "
+		style := itemStyle
+		if i == m.reviewCursor {
+			cursor = "▸ "
+			style = selectedStyle
+		}
+		line := fmt.Sprintf(" %s%s", cursor, item.Name)
+		// Truncate if too wide
+		if len(line) > listWidth-1 {
+			line = line[:listWidth-4] + "..."
+		}
+		listLines = append(listLines, style.Render(line))
+	}
+
+	if len(m.reviewItems) == 0 {
+		listLines = append(listLines, dimStyle.Render(" No pending drafts"))
+	}
+
+	leftContent := strings.Join(listLines, "\n")
+	leftPane := lipgloss.NewStyle().
+		Width(listWidth).
+		Height(totalHeight).
+		Render(leftContent)
+
+	// Vertical divider
+	vDivider := lipgloss.NewStyle().
+		Foreground(colorSurface1).
+		Width(1).
+		Height(totalHeight).
+		Render(strings.Repeat("│\n", totalHeight))
+
+	// Right pane: preview
+	previewLabel := lipgloss.NewStyle().Foreground(colorOverlay).Render("─Preview")
+	previewTopBorder := lipgloss.NewStyle().Foreground(colorSurface1).
+		Render("─") + previewLabel +
+		lipgloss.NewStyle().Foreground(colorSurface1).
+			Render(strings.Repeat("─", max(0, rightWidth-lipgloss.Width("─Preview")-1)))
+
+	var previewContent string
+	if m.reviewPreviewContent != "" {
+		// Render with Glamour
+		displayContent := stripFrontmatter(m.reviewPreviewContent)
+		previewWidth := rightWidth - 2
+		if previewWidth < 30 {
+			previewWidth = 30
+		}
+		renderer, err := newGlamourRenderer(previewWidth, true)
+		if err == nil {
+			rendered, err := renderer.Render(displayContent)
+			if err == nil {
+				previewContent = rendered
+			} else {
+				previewContent = displayContent
+			}
+		} else {
+			previewContent = displayContent
+		}
+	} else if len(m.reviewItems) > 0 {
+		previewContent = dimStyle.Render(" Loading preview...")
+	}
+
+	// Truncate preview to fit height
+	previewLines := strings.Split(previewContent, "\n")
+	maxPreviewLines := totalHeight - 2
+	if len(previewLines) > maxPreviewLines {
+		previewLines = previewLines[:maxPreviewLines]
+	}
+	previewContent = strings.Join(previewLines, "\n")
+
+	rightPane := previewTopBorder + "\n" +
+		lipgloss.NewStyle().
+			Width(rightWidth).
+			Height(totalHeight - 1).
+			Render(previewContent)
+
+	inner := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, vDivider, rightPane)
+
+	return activeBorderStyle.
+		Width(m.width - 2).
+		Render(inner)
+}
+
 // renderStatusOverlay renders the vault status overlay.
 func (m AppModel) renderStatusOverlay() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
@@ -968,7 +1338,6 @@ func (m AppModel) renderCompileSummary() string {
 	labelStyle := lipgloss.NewStyle().Foreground(colorText)
 	zeroStyle := lipgloss.NewStyle().Foreground(colorOverlay)
 	warnStyle := lipgloss.NewStyle().Foreground(colorYellow)
-	footerStyle := lipgloss.NewStyle().Foreground(colorOverlay)
 
 	var lines []string
 	lines = append(lines, "")
@@ -1029,21 +1398,13 @@ func (m AppModel) renderCompileSummary() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, footerStyle.Render("  Press any key to return"))
-	lines = append(lines, "")
 
-	content := strings.Join(lines, "\n")
+	return strings.Join(lines, "\n")
+}
 
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorGreen).
-		Padding(0, 2).
-		Width(46)
-
-	box := boxStyle.Render(content)
-
-	return lipgloss.Place(m.width, m.height-2,
-		lipgloss.Center, lipgloss.Center, box)
+// renderCompileSummaryContent returns the compile summary as scrollable content for the viewport.
+func (m AppModel) renderCompileSummaryContent() string {
+	return m.renderCompileSummary()
 }
 
 // formatDurationAgo returns a human-readable duration since the given time.
