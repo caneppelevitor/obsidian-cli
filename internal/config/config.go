@@ -219,6 +219,7 @@ func GetLogFile(logType string) (string, error) {
 		"idea":     "ideas-log.md",
 		"question": "questions-log.md",
 		"insight":  "insights-log.md",
+		"link":     "links-log.md",
 	}
 
 	cfg, err := Load()
@@ -231,6 +232,7 @@ func GetLogFile(logType string) (string, error) {
 		"idea":     cfg.Logging.Ideas.LogFile,
 		"question": cfg.Logging.Questions.LogFile,
 		"insight":  cfg.Logging.Insights.LogFile,
+		"link":     "links-log.md",
 	}
 
 	if f := files[logType]; f != "" {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,25 @@ type CompileResultMsg struct {
 type LastCompileLoadedMsg struct {
 	Time *time.Time
 	Err  error
+}
+
+// ReviewItemsLoadedMsg is sent after _review-queue.md is parsed.
+type ReviewItemsLoadedMsg struct {
+	Items []content.ReviewItem
+	Err   error
+}
+
+// ReviewPreviewMsg is sent with the rendered preview of a review item.
+type ReviewPreviewMsg struct {
+	Name    string
+	Content string
+}
+
+// ReviewActionDoneMsg is sent after an approve/discard action.
+type ReviewActionDoneMsg struct {
+	Action string
+	Name   string
+	Err    error
 }
 
 // FileListMsg is sent with a list of entries in the current directory.
@@ -219,6 +239,77 @@ func runCompileCmd(vaultPath string) tea.Cmd {
 	}
 }
 
+func loadReviewItemsCmd(vaultRootPath string) tea.Cmd {
+	return func() tea.Msg {
+		reviewPath := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		data, err := vault.ReadFile(reviewPath)
+		if err != nil {
+			return ReviewItemsLoadedMsg{Err: err}
+		}
+		items := content.ParseReviewItems(data)
+		return ReviewItemsLoadedMsg{Items: items}
+	}
+}
+
+func loadReviewPreviewCmd(vaultRootPath, itemName string) tea.Cmd {
+	return func() tea.Msg {
+		zetDir := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten")
+		var found string
+		entries, _ := os.ReadDir(zetDir)
+		for _, sub := range entries {
+			if !sub.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(zetDir, sub.Name(), itemName+".md")
+			if _, err := os.Stat(candidate); err == nil {
+				found = candidate
+				break
+			}
+		}
+		if found == "" {
+			// Try root level
+			candidate := filepath.Join(zetDir, itemName+".md")
+			if _, err := os.Stat(candidate); err == nil {
+				found = candidate
+			}
+		}
+		if found == "" {
+			return ReviewPreviewMsg{Name: itemName, Content: "File not found"}
+		}
+		data, err := vault.ReadFile(found)
+		if err != nil {
+			return ReviewPreviewMsg{Name: itemName, Content: "Error reading file"}
+		}
+		return ReviewPreviewMsg{Name: itemName, Content: data}
+	}
+}
+
+func approveReviewItemCmd(vaultRootPath, itemName string) tea.Cmd {
+	return func() tea.Msg {
+		reviewPath := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		data, err := vault.ReadFile(reviewPath)
+		if err != nil {
+			return ReviewActionDoneMsg{Action: "approved", Name: itemName, Err: err}
+		}
+		updated := content.ApproveReviewItem(data, itemName)
+		err = vault.WriteFile(reviewPath, updated)
+		return ReviewActionDoneMsg{Action: "approved", Name: itemName, Err: err}
+	}
+}
+
+func discardReviewItemCmd(vaultRootPath, itemName string) tea.Cmd {
+	return func() tea.Msg {
+		reviewPath := filepath.Join(vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		data, err := vault.ReadFile(reviewPath)
+		if err != nil {
+			return ReviewActionDoneMsg{Action: "discarded", Name: itemName, Err: err}
+		}
+		updated := content.DiscardReviewItem(data, itemName)
+		err = vault.WriteFile(reviewPath, updated)
+		return ReviewActionDoneMsg{Action: "discarded", Name: itemName, Err: err}
+	}
+}
+
 func loadCompileResultCmd(vaultPath string) tea.Cmd {
 	return func() tea.Msg {
 		lastCompilePath := filepath.Join(vaultPath, "System", "last-compile.md")
@@ -249,6 +340,7 @@ func logEntryCmd(vaultPath, currentFile, rawContent, logType string) tea.Cmd {
 			"idea":     "# Ideas Log\n\nCentralized log of all ideas captured across daily notes.\n\n",
 			"question": "# Questions Log\n\nCentralized log of all questions captured across daily notes.\n\n",
 			"insight":  "# Insights Log\n\nCentralized log of all insights captured across daily notes.\n\n",
+			"link":     "# Links Log\n\nCentralized log of all links captured across daily notes.\n\n",
 		}
 		header, ok := headers[logType]
 		if !ok {
