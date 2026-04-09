@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -208,6 +210,34 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 			return FileViewLoadedMsg{Content: data, Path: configPath, Err: err}
 		}
 
+	case cmd == "status":
+		return fetchVaultStatusCmd(m.vaultRootPath, m.lastCompileTime)
+
+	case cmd == "compile":
+		if m.compiling {
+			m.statusText = "Compile already in progress"
+			return nil
+		}
+		if _, err := exec.LookPath("claude"); err != nil {
+			m.statusText = "Claude Code CLI not found. Install it: https://docs.anthropic.com/en/docs/claude-code"
+			return nil
+		}
+		m.compiling = true
+		m.loading = true
+		return tea.Batch(runCompileCmd(m.vaultRootPath), m.spinner.Tick)
+
+	case cmd == "review":
+		reviewPath := filepath.Join(m.vaultRootPath, "Knowledge", "zettelkasten", "_review-queue.md")
+		if _, err := os.Stat(reviewPath); err != nil {
+			m.statusText = "No review queue found"
+			return nil
+		}
+		m.activeTab = tabFiles
+		return func() tea.Msg {
+			data, err := vault.ReadFile(reviewPath)
+			return FileViewLoadedMsg{Content: data, Path: reviewPath, Err: err}
+		}
+
 	case strings.HasPrefix(cmd, "open "):
 		return m.handleOpenFile(strings.TrimSpace(cmd[5:]))
 
@@ -290,6 +320,9 @@ Commands:
   /save      Save current file
   /daily     Reload daily note
   /config    View and edit CLI config
+  /status    Show vault health (inbox, queue, raw notes)
+  /compile   Run knowledge compile via Claude Code
+  /review    Open zettelkasten review queue
   /help      Show this help
   /exit      Exit the application
 

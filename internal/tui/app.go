@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/help"
@@ -19,6 +20,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/caneppelevitor/obsidian-cli/internal/config"
+	"github.com/caneppelevitor/obsidian-cli/internal/content"
 	"github.com/caneppelevitor/obsidian-cli/internal/tasks"
 )
 
@@ -65,6 +67,14 @@ type AppModel struct {
 	filePreviewName    string
 	filePreviewMeta    filePreviewMetadata
 	lastPreviewedFile  string
+
+	// Compile & Status
+	showingStatus        bool
+	showingCompileSummary bool
+	compiling            bool
+	compileResult        *content.CompileResult
+	vaultStatus          *content.VaultStatus
+	lastCompileTime      *time.Time
 
 	// Layout
 	width, height int
@@ -136,6 +146,7 @@ func (m AppModel) Init() tea.Cmd {
 	m.loading = true
 	return tea.Batch(
 		loadTasksCmd(m.vaultPath),
+		loadLastCompileTimeCmd(m.vaultRootPath),
 		m.spinner.Tick,
 	)
 }
@@ -180,6 +191,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		// Dismiss overlays on any keypress
+		if m.showingStatus {
+			m.showingStatus = false
+			return m, nil
+		}
+		if m.showingCompileSummary {
+			m.showingCompileSummary = false
+			return m, nil
+		}
+
 		// Edit mode: forward everything to textarea except Esc and Ctrl+S
 		if m.editMode {
 			switch {
@@ -435,7 +456,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case spinner.TickMsg:
-		if m.loading {
+		if m.loading || m.compiling {
 			var spinCmd tea.Cmd
 			m.spinner, spinCmd = m.spinner.Update(msg)
 			cmds = append(cmds, spinCmd)
@@ -573,6 +594,46 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			DirStats:  msg.DirStats,
 		}
 
+	case LastCompileLoadedMsg:
+		if msg.Err == nil {
+			m.lastCompileTime = msg.Time
+		}
+
+	case VaultStatusMsg:
+		m.loading = false
+		if msg.Err == nil {
+			m.vaultStatus = &msg.Status
+			m.showingStatus = true
+		} else {
+			m.statusText = fmt.Sprintf("Error fetching status: %v", msg.Err)
+		}
+
+	case CompileDoneMsg:
+		m.compiling = false
+		m.loading = false
+		if msg.Err != nil {
+			m.statusText = fmt.Sprintf("Compile error: %v", msg.Err)
+		} else if msg.ExitCode != 0 {
+			errMsg := msg.Stderr
+			if len(errMsg) > 200 {
+				errMsg = errMsg[:200] + "..."
+			}
+			m.statusText = fmt.Sprintf("Compile failed (exit %d): %s", msg.ExitCode, errMsg)
+		} else {
+			cmds = append(cmds,
+				loadCompileResultCmd(m.vaultRootPath),
+				loadLastCompileTimeCmd(m.vaultRootPath),
+			)
+		}
+
+	case CompileResultMsg:
+		if msg.Err == nil && msg.Result != nil {
+			m.compileResult = msg.Result
+			m.showingCompileSummary = true
+		} else if msg.Err != nil {
+			m.statusText = fmt.Sprintf("Error parsing compile results: %v", msg.Err)
+		}
+
 	case StatusMsg:
 		m.statusText = msg.Text
 
@@ -633,12 +694,37 @@ func (m AppModel) View() tea.View {
 		return tea.NewView("Initializing...")
 	}
 
+	// Full-screen overlays
+	if m.showingStatus {
+		v := tea.NewView(m.renderStatusOverlay())
+		v.AltScreen = true
+		return v
+	}
+	if m.showingCompileSummary {
+		v := tea.NewView(m.renderCompileSummary())
+		v.AltScreen = true
+		return v
+	}
+
 	tabs := []string{"Daily Note", "Tasks", "Files"}
 	tabBar := RenderTabBar(tabs, m.activeTab, m.width)
 
 	// Main content area with active/inactive borders
 	var mainContent string
 	switch {
+	case m.compiling:
+		viewportHeight := m.height - 5
+		if viewportHeight < 3 {
+			viewportHeight = 3
+		}
+		spinContent := lipgloss.Place(
+			m.width-4, viewportHeight,
+			lipgloss.Center, lipgloss.Center,
+			m.spinner.View()+" Compiling vault...",
+		)
+		mainContent = activeBorderStyle.
+			Width(m.width - 2).
+			Render(spinContent)
 	case m.activeTab == tabNotes && m.editMode:
 		title := BorderWithTitle("EDITING: "+filepath.Base(m.currentFile), m.width-2, true)
 		body := lipgloss.NewStyle().
@@ -778,12 +864,20 @@ func (m AppModel) buildStatusBar() string {
 	if m.statusText != "" {
 		left = prefix + m.statusText
 	} else {
+		// Compile indicator
+		compileAgo := formatDurationAgo(m.lastCompileTime)
+		compileIndicator := fmt.Sprintf("Last compile: %s", compileAgo)
+		if m.lastCompileTime == nil || time.Since(*m.lastCompileTime) > 7*24*time.Hour {
+			compileIndicator = lipgloss.NewStyle().Foreground(colorYellow).
+				Background(colorSurface0).Render(compileIndicator)
+		}
+
 		switch m.activeTab {
 		case tabNotes:
 			words := len(regexp.MustCompile(`\S+`).FindAllString(m.fileContent, -1))
 			sections := len(regexp.MustCompile(`(?m)^## `).FindAllString(m.fileContent, -1))
 			filename := filepath.Base(m.currentFile)
-			left = fmt.Sprintf("%s %s  %d words  %d sections", prefix, filename, words, sections)
+			left = fmt.Sprintf("%s %s  %d words  %d sections  %s", prefix, filename, words, sections, compileIndicator)
 			right = "e edit · tab switch · /help "
 		case tabTasks:
 			left = prefix + " j/k navigate · Enter complete"
@@ -811,6 +905,165 @@ func (m AppModel) buildStatusBar() string {
 	filler := statusBarStyle.Render(strings.Repeat(" ", gap))
 
 	return leftRendered + filler + rightRendered
+}
+
+// renderStatusOverlay renders the vault status overlay.
+func (m AppModel) renderStatusOverlay() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	labelStyle := lipgloss.NewStyle().Foreground(colorText)
+	valueStyle := lipgloss.NewStyle().Foreground(colorText).Bold(true)
+	zeroStyle := lipgloss.NewStyle().Foreground(colorOverlay)
+	footerStyle := lipgloss.NewStyle().Foreground(colorOverlay)
+
+	compileAgo := formatDurationAgo(m.lastCompileTime)
+	compileStyle := labelStyle
+	if m.lastCompileTime == nil || time.Since(*m.lastCompileTime) > 7*24*time.Hour {
+		compileStyle = lipgloss.NewStyle().Foreground(colorYellow)
+	}
+
+	renderMetric := func(label string, count int, unit string) string {
+		if count == 0 {
+			return zeroStyle.Render(fmt.Sprintf("  %s: 0 %s", label, unit))
+		}
+		return labelStyle.Render(fmt.Sprintf("  %s: ", label)) +
+			valueStyle.Render(fmt.Sprintf("%d", count)) +
+			labelStyle.Render(fmt.Sprintf(" %s", unit))
+	}
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, titleStyle.Render("  Vault Status"))
+	lines = append(lines, "")
+	lines = append(lines, compileStyle.Render(fmt.Sprintf("  Last compile: %s", compileAgo)))
+	lines = append(lines, "")
+
+	if m.vaultStatus != nil {
+		lines = append(lines, renderMetric("Wiki inbox", m.vaultStatus.WikiInboxCount, "unprocessed"))
+		lines = append(lines, renderMetric("Review queue", m.vaultStatus.ReviewQueueCount, "pending drafts"))
+		lines = append(lines, renderMetric("Raw notes", m.vaultStatus.RawNotesSinceCompile, "since last compile"))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, footerStyle.Render("  Press any key to return"))
+	lines = append(lines, "")
+
+	content := strings.Join(lines, "\n")
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBlue).
+		Padding(0, 2).
+		Width(42)
+
+	box := boxStyle.Render(content)
+
+	return lipgloss.Place(m.width, m.height-2,
+		lipgloss.Center, lipgloss.Center, box)
+}
+
+// renderCompileSummary renders the compile summary overlay.
+func (m AppModel) renderCompileSummary() string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorGreen)
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(colorBlue)
+	labelStyle := lipgloss.NewStyle().Foreground(colorText)
+	zeroStyle := lipgloss.NewStyle().Foreground(colorOverlay)
+	warnStyle := lipgloss.NewStyle().Foreground(colorYellow)
+	footerStyle := lipgloss.NewStyle().Foreground(colorOverlay)
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, titleStyle.Render("  Compile Complete"))
+	lines = append(lines, "")
+
+	if m.compileResult == nil {
+		lines = append(lines, labelStyle.Render("  No results available"))
+	} else {
+		renderSection := func(name string, metrics content.SectionMetrics) {
+			lines = append(lines, sectionStyle.Render("  "+name))
+			if metrics.Items == nil || len(metrics.Items) == 0 {
+				lines = append(lines, zeroStyle.Render("    No data"))
+			} else {
+				for k, v := range metrics.Items {
+					style := labelStyle
+					if v == "0" || v == "" {
+						style = zeroStyle
+					}
+					lines = append(lines, style.Render(fmt.Sprintf("    %s: %s", k, v)))
+				}
+			}
+			lines = append(lines, "")
+		}
+
+		renderSection("Wiki", m.compileResult.Wiki)
+		renderSection("Zettelkasten", m.compileResult.Zettelkasten)
+
+		// Lint with warnings
+		lines = append(lines, sectionStyle.Render("  Lint"))
+		if m.compileResult.Lint.Items == nil || len(m.compileResult.Lint.Items) == 0 {
+			lines = append(lines, zeroStyle.Render("    No data"))
+		} else {
+			for k, v := range m.compileResult.Lint.Items {
+				style := labelStyle
+				lower := strings.ToLower(strings.TrimSpace(v))
+				if lower != "none" && lower != "0" && lower != "" {
+					style = warnStyle
+				}
+				lines = append(lines, style.Render(fmt.Sprintf("    %s: %s", k, v)))
+			}
+		}
+		lines = append(lines, "")
+
+		// Suggestions
+		if len(m.compileResult.Suggestions) > 0 {
+			lines = append(lines, sectionStyle.Render("  Suggestions"))
+			for _, s := range m.compileResult.Suggestions {
+				lines = append(lines, labelStyle.Render("    • "+s))
+			}
+			lines = append(lines, "")
+		}
+
+		// Duration
+		if m.compileResult.Frontmatter.DurationSeconds > 0 {
+			lines = append(lines, zeroStyle.Render(fmt.Sprintf("  Duration: %ds", m.compileResult.Frontmatter.DurationSeconds)))
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, footerStyle.Render("  Press any key to return"))
+	lines = append(lines, "")
+
+	content := strings.Join(lines, "\n")
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorGreen).
+		Padding(0, 2).
+		Width(46)
+
+	box := boxStyle.Render(content)
+
+	return lipgloss.Place(m.width, m.height-2,
+		lipgloss.Center, lipgloss.Center, box)
+}
+
+// formatDurationAgo returns a human-readable duration since the given time.
+func formatDurationAgo(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	d := time.Since(*t)
+	switch {
+	case d < time.Hour:
+		return "just now"
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	case d < 4*7*24*time.Hour:
+		return fmt.Sprintf("%dw ago", int(d.Hours()/(7*24)))
+	default:
+		return fmt.Sprintf("%dmo ago", int(d.Hours()/(30*24)))
+	}
 }
 
 // Run starts the TUI application.
