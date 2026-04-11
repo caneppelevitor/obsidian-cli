@@ -166,8 +166,8 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 		}
 
 		if isDir {
-			// For directories, show a summary
-			folders, mdFiles, err := vault.CountDirContents(fullPath)
+			// For directories, show recursive totals so the user sees nested content
+			folders, mdFiles, err := vault.CountDirContentsRecursive(fullPath)
 			if err != nil {
 				return FilePreviewMsg{Name: name, Content: "Error reading directory"}
 			}
@@ -180,7 +180,7 @@ func (m *AppModel) loadFilePreview() tea.Cmd {
 
 			return FilePreviewMsg{
 				Name:      name + "/",
-				Content:   fmt.Sprintf("Directory with %d folders and %d markdown files", folders, mdFiles),
+				Content:   fmt.Sprintf("Directory with %d folders and %d markdown files (recursive)", folders, mdFiles),
 				ModTime:   modTime,
 				IsDir:     true,
 				DirStats:  dirStats{Folders: folders, Files: mdFiles},

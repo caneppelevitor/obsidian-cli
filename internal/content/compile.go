@@ -1,11 +1,25 @@
 package content
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// phaseMarkerRe matches lines like "## Phase 1: Wiki Compilation" or "## Phase 2.5: Agent Touch".
+var phaseMarkerRe = regexp.MustCompile(`^#{1,2}\s+Phase\s+([0-9.]+):\s*(.+)$`)
+
+// ParsePhaseMarker extracts the phase number and name from a compile output line.
+// Returns ("", "", false) if the line doesn't match a phase marker.
+func ParsePhaseMarker(line string) (number string, name string, ok bool) {
+	matches := phaseMarkerRe.FindStringSubmatch(strings.TrimSpace(line))
+	if len(matches) != 3 {
+		return "", "", false
+	}
+	return matches[1], strings.TrimSpace(matches[2]), true
+}
 
 // CompileFrontmatter holds parsed YAML frontmatter from last-compile.md.
 type CompileFrontmatter struct {

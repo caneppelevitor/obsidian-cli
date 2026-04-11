@@ -22,6 +22,15 @@ type AppConfig struct {
 	Interface    InterfaceConfig    `yaml:"interface"`
 	Organization OrganizationConfig `yaml:"organization"`
 	Advanced     AdvancedConfig     `yaml:"advanced"`
+	Debug        DebugConfig        `yaml:"debug"`
+}
+
+// DebugConfig controls the file-based debug logger (see internal/logging).
+type DebugConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	LogFile         string `yaml:"logFile"`
+	Level           string `yaml:"level"`           // debug | info | warn | error
+	TruncateOnStart bool   `yaml:"truncateOnStart"` // wipe log file on each run
 }
 
 type VaultConfig struct {
@@ -136,6 +145,12 @@ func DefaultConfig() AppConfig {
 				MaxFileSize: 10,
 				WatchFiles:  false,
 			},
+		},
+		Debug: DebugConfig{
+			Enabled:         false,
+			LogFile:         "~/.obsidian-cli/obsidian.log",
+			Level:           "info",
+			TruncateOnStart: true,
 		},
 	}
 }
@@ -332,6 +347,19 @@ func mergeConfig(defaults, user AppConfig) AppConfig {
 	}
 	if user.Advanced.Performance.MaxFileSize != 0 {
 		result.Advanced.Performance.MaxFileSize = user.Advanced.Performance.MaxFileSize
+	}
+
+	// Debug (bool can't distinguish "not set" from "false" — user config wins)
+	result.Debug.Enabled = user.Debug.Enabled
+	if user.Debug.LogFile != "" {
+		result.Debug.LogFile = user.Debug.LogFile
+	}
+	if user.Debug.Level != "" {
+		result.Debug.Level = user.Debug.Level
+	}
+	// TruncateOnStart: explicit user value wins only if debug.Enabled is set
+	if user.Debug.Enabled {
+		result.Debug.TruncateOnStart = user.Debug.TruncateOnStart
 	}
 
 	return result
