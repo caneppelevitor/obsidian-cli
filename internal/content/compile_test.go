@@ -103,6 +103,41 @@ func TestParseCompileResult(t *testing.T) {
 	}
 }
 
+func TestParsePhaseMarker(t *testing.T) {
+	tests := []struct {
+		line       string
+		wantNumber string
+		wantName   string
+		wantOk     bool
+	}{
+		{"## Phase 1: Wiki Compilation", "1", "Wiki Compilation", true},
+		{"## Phase 2: Zettelkasten Processing", "2", "Zettelkasten Processing", true},
+		{"## Phase 2.5: Agent Touch", "2.5", "Agent Touch", true},
+		{"# Phase 6: Summary", "6", "Summary", true},
+		{"  ## Phase 3: Housekeeping  ", "3", "Housekeeping", true},
+		{"## Phase 1: Wiki Compilation — 3 items", "1", "Wiki Compilation — 3 items", true},
+		{"just a regular line", "", "", false},
+		{"## Some other heading", "", "", false},
+		{"", "", "", false},
+		{"Phase 1: no header prefix", "", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			num, name, ok := ParsePhaseMarker(tt.line)
+			if ok != tt.wantOk {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOk)
+			}
+			if num != tt.wantNumber {
+				t.Errorf("number = %q, want %q", num, tt.wantNumber)
+			}
+			if name != tt.wantName {
+				t.Errorf("name = %q, want %q", name, tt.wantName)
+			}
+		})
+	}
+}
+
 func TestParseCompileResultMissingSections(t *testing.T) {
 	input := "---\nlast_compile: 2026-04-08T10:00:00Z\n---\n\nJust some text, no sections"
 

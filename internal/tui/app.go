@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -21,15 +24,61 @@ import (
 
 	"github.com/caneppelevitor/obsidian-cli/internal/config"
 	"github.com/caneppelevitor/obsidian-cli/internal/content"
+	"github.com/caneppelevitor/obsidian-cli/internal/logging"
 	"github.com/caneppelevitor/obsidian-cli/internal/tasks"
 	"github.com/caneppelevitor/obsidian-cli/internal/vault"
 )
 
 const (
-	tabNotes = 0
-	tabTasks = 1
-	tabFiles = 2
+	tabNotes   = 0
+	tabTasks   = 1
+	tabFiles   = 2
+	tabCompile = 3 // Only present when m.compiling || m.compileResult != nil
 )
+
+// compileTabVisible returns true if the Compile tab should be shown in the tab bar.
+// The tab appears when a compile is running, when there's a cached result to view,
+// or when the user is currently on the compile tab (prevents the tab from vanishing
+// mid-transition between CompileDoneMsg and CompileResultMsg).
+func (m AppModel) compileTabVisible() bool {
+	return m.compiling || m.compileResult != nil || m.activeTab == tabCompile
+}
+
+// numTabs returns the count of visible tabs (3 normally, 4 when compile is active).
+func (m AppModel) numTabs() int {
+	if m.compileTabVisible() {
+		return 4
+	}
+	return 3
+}
+
+// quitCmd cancels any running compile and returns tea.Quit.
+// Used by all Quit key handlers to avoid leaking the compile subprocess.
+func (m *AppModel) quitCmd() tea.Cmd {
+	if m.compileCancel != nil {
+		m.compileCancel()
+	}
+	return tea.Quit
+}
+
+// teaProgram is the package-level reference to the running Bubble Tea program.
+// Set by Run() at startup. Used by streaming goroutines to send messages back
+// into the Update() loop. Only streaming goroutines should touch this.
+var teaProgram *tea.Program
+
+// CompileProgress tracks live state of a running compile for UI display.
+type CompileProgress struct {
+	CurrentPhase string   // e.g., "Wiki Compilation"
+	PhaseNumber  string   // e.g., "1" or "2.5"
+	RecentLines  []string // ring buffer, max 10 lines
+
+	// Token usage (accumulated from assistant events)
+	InputTokens         int
+	OutputTokens        int
+	CacheReadTokens     int
+	CacheCreationTokens int
+	CostUSD             float64
+}
 
 // AppModel is the root Bubble Tea model.
 type AppModel struct {
@@ -84,6 +133,13 @@ type AppModel struct {
 	compileResult        *content.CompileResult
 	vaultStatus          *content.VaultStatus
 	lastCompileTime      *time.Time
+
+	// Streaming compile state
+	compileProgress    *CompileProgress   // nil when no compile running
+	compileCancel      context.CancelFunc // nil when no compile running
+	compileStartTime   time.Time
+	lastCompileTokens  CompileTokensMsg // persists after compile finishes (for summary display)
+	lastCompileElapsed time.Duration    // persists after compile finishes
 
 	// Layout
 	width, height int
@@ -160,7 +216,19 @@ func (m AppModel) Init() tea.Cmd {
 	)
 }
 
-func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AppModel) Update(msg tea.Msg) (model tea.Model, cmd tea.Cmd) {
+	// Panic recovery: log the crash before dying so we have a forensic trail.
+	defer func() {
+		if r := recover(); r != nil {
+			logging.Error("panic in Update()",
+				"recover", fmt.Sprintf("%v", r),
+				"msgType", fmt.Sprintf("%T", msg),
+				"stack", string(debug.Stack()),
+			)
+			panic(r) // re-panic so Bubble Tea exits cleanly
+		}
+	}()
+
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -169,7 +237,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.SetWidth(msg.Width)
 
-		viewportHeight := m.height - 7 // tab(2) + border(2) + sep(1) + input(1) + status(1)
+		viewportHeight := m.height - 8 // tab(2) + border(2) + sep(1) + input(1) + gap(1) + status(1)
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		}
@@ -200,6 +268,49 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		// Compile tab key handling
+		if m.activeTab == tabCompile {
+			if key.Matches(msg, m.keys.Quit) {
+				return m, m.quitCmd()
+			}
+			if msg.String() == "esc" || msg.String() == "escape" {
+				if m.compiling {
+					// Cancel the running compile
+					if m.compileCancel != nil {
+						m.compileCancel()
+					}
+					m.statusText = "Compile cancelled"
+					m.activeTab = tabNotes
+					m.input.Focus()
+					return m, nil
+				}
+				// Not compiling: dismiss the compile tab (clear cached result)
+				m.compileResult = nil
+				m.activeTab = tabNotes
+				m.input.Focus()
+				return m, nil
+			}
+			if key.Matches(msg, m.keys.Tab) {
+				// Cycle to next tab (wrap around all visible tabs)
+				m.activeTab = (m.activeTab + 1) % m.numTabs()
+				if m.activeTab == tabNotes {
+					m.input.Focus()
+				}
+				m.updateViewportContent()
+				return m, nil
+			}
+			// Forward scroll keys to viewport when viewing summary
+			if !m.compiling && m.compileResult != nil {
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				if vpCmd != nil {
+					cmds = append(cmds, vpCmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
+			return m, nil
+		}
+
 		// Dismiss overlays on any keypress
 		if m.showingStatus {
 			m.showingStatus = false
@@ -227,7 +338,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Viewing a draft
 				switch {
 				case key.Matches(msg, m.keys.Quit):
-					return m, tea.Quit
+					return m, m.quitCmd()
 				case msg.String() == "esc" || msg.String() == "escape":
 					m.reviewDraftPath = ""
 					m.fileViewContent = ""
@@ -270,7 +381,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Review list mode
 			switch {
 			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
+				return m, m.quitCmd()
 			case msg.String() == "esc" || msg.String() == "escape":
 				m.reviewMode = false
 				m.reviewItems = nil
@@ -330,7 +441,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editMode {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
+				return m, m.quitCmd()
 			case msg.String() == "esc" || msg.String() == "escape":
 				cmd := m.exitEditMode()
 				if cmd != nil {
@@ -357,7 +468,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fileEditMode {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
+				return m, m.quitCmd()
 			case msg.String() == "esc" || msg.String() == "escape":
 				if m.reviewMode {
 					// Save and return to review draft view
@@ -394,7 +505,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.fileViewMode {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
+				return m, m.quitCmd()
 			case msg.String() == "esc" || msg.String() == "escape":
 				m.exitFileViewMode()
 				return m, nil
@@ -406,7 +517,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(cmds...)
 			case key.Matches(msg, m.keys.Tab):
 				m.exitFileViewMode()
-				m.activeTab = (m.activeTab + 1) % 3
+				m.activeTab = (m.activeTab + 1) % m.numTabs()
 				m.viewport.SetContent(m.renderContent())
 				if m.activeTab == tabTasks {
 					m.loading = true
@@ -428,9 +539,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeTab == tabTasks {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
+				return m, m.quitCmd()
 			case key.Matches(msg, m.keys.Tab):
-				m.activeTab = (m.activeTab + 1) % 3
+				m.activeTab = (m.activeTab + 1) % m.numTabs()
 				m.viewport.SetContent(m.renderContent())
 				if m.activeTab == tabFiles && !m.fileListReady {
 					m.loading = true
@@ -460,9 +571,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeTab == tabFiles && m.fileListReady {
 			switch {
 			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
+				return m, m.quitCmd()
 			case key.Matches(msg, m.keys.Tab):
-				m.activeTab = (m.activeTab + 1) % 3
+				m.activeTab = (m.activeTab + 1) % m.numTabs()
 				m.fileFuzzyMode = false
 				m.viewport.SetContent(m.renderContent())
 				if m.activeTab == tabTasks {
@@ -521,14 +632,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch {
 		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
+			return m, m.quitCmd()
 
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
 
 		case key.Matches(msg, m.keys.Tab):
-			m.activeTab = (m.activeTab + 1) % 3
+			m.activeTab = (m.activeTab + 1) % m.numTabs()
 			m.viewport.SetContent(m.renderContent())
 			if m.activeTab == tabTasks {
 				m.loading = true
@@ -600,6 +711,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SavedMsg:
 		m.loading = false
 		if msg.Err != nil {
+			logging.Error("save failed", "err", msg.Err, "file", m.currentFile)
 			m.statusText = fmt.Sprintf("Error saving: %v", msg.Err)
 		} else {
 			m.statusText = ""
@@ -751,28 +863,124 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusText = fmt.Sprintf("Error fetching status: %v", msg.Err)
 		}
 
+	case CompileProgressMsg:
+		if m.compileProgress == nil {
+			// Compile was cancelled or already done — ignore stragglers.
+			break
+		}
+		if msg.IsPhaseMarker {
+			logging.Info("compile phase transition",
+				"number", msg.PhaseNumber,
+				"name", msg.PhaseName,
+			)
+			m.compileProgress.CurrentPhase = sanitizeLine(msg.PhaseName)
+			m.compileProgress.PhaseNumber = msg.PhaseNumber
+		}
+		logging.Debug("compile output", "line", msg.Line)
+		clean := sanitizeLine(msg.Line)
+		if strings.TrimSpace(clean) != "" {
+			m.compileProgress.RecentLines = append(m.compileProgress.RecentLines, clean)
+			if len(m.compileProgress.RecentLines) > 10 {
+				m.compileProgress.RecentLines = m.compileProgress.RecentLines[len(m.compileProgress.RecentLines)-10:]
+			}
+		}
+
+	case CompileTickMsg:
+		// Drive per-second re-renders while compile is running.
+		if m.compiling {
+			cmds = append(cmds, compileTickCmd())
+		}
+
+	case CompileTokensMsg:
+		if m.compileProgress == nil {
+			break
+		}
+		// Track cumulative maximums — assistant events report per-message usage,
+		// final result event reports the total. We take the max so we show the
+		// highest count seen so far (the result event's total will dominate).
+		if msg.InputTokens > m.compileProgress.InputTokens {
+			m.compileProgress.InputTokens = msg.InputTokens
+		}
+		if msg.OutputTokens > m.compileProgress.OutputTokens {
+			m.compileProgress.OutputTokens = msg.OutputTokens
+		}
+		if msg.CacheReadTokens > m.compileProgress.CacheReadTokens {
+			m.compileProgress.CacheReadTokens = msg.CacheReadTokens
+		}
+		if msg.CacheCreationTokens > m.compileProgress.CacheCreationTokens {
+			m.compileProgress.CacheCreationTokens = msg.CacheCreationTokens
+		}
+		if msg.CostUSD > m.compileProgress.CostUSD {
+			m.compileProgress.CostUSD = msg.CostUSD
+		}
+
 	case CompileDoneMsg:
+		logging.Info("compile done",
+			"exitCode", msg.ExitCode,
+			"err", fmt.Sprintf("%v", msg.Err),
+			"stderrLen", len(msg.Stderr),
+			"elapsed", time.Since(m.compileStartTime).String(),
+		)
+		wasOnCompileTab := m.activeTab == tabCompile
+		wasCancelled := msg.Err != nil && (msg.Err == context.Canceled ||
+			(msg.ExitCode == -1) ||
+			strings.Contains(msg.Stderr, "signal: killed"))
+
+		// Preserve token usage and elapsed time for the summary view
+		if m.compileProgress != nil {
+			m.lastCompileTokens = CompileTokensMsg{
+				InputTokens:         m.compileProgress.InputTokens,
+				OutputTokens:        m.compileProgress.OutputTokens,
+				CacheReadTokens:     m.compileProgress.CacheReadTokens,
+				CacheCreationTokens: m.compileProgress.CacheCreationTokens,
+				CostUSD:             m.compileProgress.CostUSD,
+			}
+		}
+		m.lastCompileElapsed = time.Since(m.compileStartTime)
+
 		m.compiling = false
+		m.compileProgress = nil
+		m.compileCancel = nil
 		m.loading = false
-		if msg.Err != nil {
+
+		if wasCancelled {
+			// Cleanup only — status text already set by Esc handler.
+			if m.statusText == "" {
+				m.statusText = "Compile cancelled"
+			}
+		} else if msg.Err != nil {
 			m.statusText = fmt.Sprintf("Compile error: %v", msg.Err)
+			// Compile tab goes away on error
+			if m.activeTab == tabCompile {
+				m.activeTab = tabNotes
+				m.input.Focus()
+			}
 		} else if msg.ExitCode != 0 {
 			errMsg := msg.Stderr
 			if len(errMsg) > 200 {
 				errMsg = errMsg[:200] + "..."
 			}
 			m.statusText = fmt.Sprintf("Compile failed (exit %d): %s", msg.ExitCode, errMsg)
+			if m.activeTab == tabCompile {
+				m.activeTab = tabNotes
+				m.input.Focus()
+			}
 		} else {
+			// Success: load the result and refresh the last-compile time.
+			// The compile tab stays visible showing the summary.
 			cmds = append(cmds,
 				loadCompileResultCmd(m.vaultRootPath),
 				loadLastCompileTimeCmd(m.vaultRootPath),
 			)
+			if !wasOnCompileTab {
+				m.statusText = "✓ Compile complete — type /compile to view summary"
+			}
 		}
 
 	case CompileResultMsg:
 		if msg.Err == nil && msg.Result != nil {
 			m.compileResult = msg.Result
-			m.showingCompileSummary = true
+			// Render summary into viewport so it's ready when user views the Compile tab
 			m.viewport.SetContent(m.renderCompileSummaryContent())
 			m.viewport.SetYOffset(0)
 		} else if msg.Err != nil {
@@ -804,8 +1012,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ReviewActionDoneMsg:
 		m.loading = false
 		if msg.Err != nil {
+			logging.Error("review action failed", "action", msg.Action, "name", msg.Name, "err", msg.Err)
 			m.statusText = fmt.Sprintf("Error: %v", msg.Err)
 		} else {
+			logging.Info("review action completed", "action", msg.Action, "name", msg.Name)
 			action := strings.ToUpper(msg.Action[:1]) + msg.Action[1:]
 			m.statusText = fmt.Sprintf("%s: %s", action, msg.Name)
 			m.reviewDraftPath = ""
@@ -867,12 +1077,33 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m AppModel) View() tea.View {
+func (m AppModel) View() (view tea.View) {
+	defer func() {
+		if r := recover(); r != nil {
+			logging.Error("panic in View()",
+				"recover", fmt.Sprintf("%v", r),
+				"activeTab", m.activeTab,
+				"compiling", m.compiling,
+				"stack", string(debug.Stack()),
+			)
+			panic(r)
+		}
+	}()
+
 	if !m.ready {
 		return tea.NewView("Initializing...")
 	}
 
 	tabs := []string{"Daily Note", "Tasks", "Files"}
+	if m.compileTabVisible() {
+		label := "Compile"
+		if m.compiling {
+			label = "⚙ Compiling"
+		} else if m.compileResult != nil {
+			label = "✓ Compile"
+		}
+		tabs = append(tabs, label)
+	}
 	tabBar := RenderTabBar(tabs, m.activeTab, m.width)
 
 	// Full-screen overlays
@@ -933,19 +1164,15 @@ func (m AppModel) View() tea.View {
 	// Main content area with active/inactive borders
 	var mainContent string
 	switch {
-	case m.compiling:
-		viewportHeight := m.height - 5
-		if viewportHeight < 3 {
-			viewportHeight = 3
-		}
-		spinContent := lipgloss.Place(
-			m.width-4, viewportHeight,
-			lipgloss.Center, lipgloss.Center,
-			m.spinner.View()+" Compiling vault...",
-		)
-		mainContent = activeBorderStyle.
-			Width(m.width - 2).
-			Render(spinContent)
+	case m.activeTab == tabCompile && m.compiling:
+		mainContent = m.renderCompileProgress()
+	case m.activeTab == tabCompile && m.compileResult != nil:
+		// Summary view: render the viewport with green border (like before)
+		border := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorGreen).
+			Width(m.width - 2)
+		mainContent = border.Render(m.viewport.View())
 	case m.activeTab == tabNotes && m.editMode:
 		mainContent = m.renderEditBox(filepath.Base(m.currentFile))
 	case m.activeTab == tabTasks:
@@ -989,7 +1216,7 @@ func (m AppModel) View() tea.View {
 
 	var result string
 	if m.activeTab == tabNotes && !m.editMode {
-		// Notes view mode: input line with mode pill
+		// Notes view mode: input line framed by separators above and below
 		sep := separatorStyle.Render(strings.Repeat("─", m.width))
 		modePill := DetectInputMode(m.input.Value())
 		inputLine := " " + modePill + " " + inputPromptStyle.Render("> ") + m.input.View()
@@ -998,6 +1225,7 @@ func (m AppModel) View() tea.View {
 			mainContent,
 			sep,
 			inputLine,
+			sep,
 			statusBar,
 		)
 	} else if m.fileViewMode && !m.fileEditMode {
@@ -1051,7 +1279,9 @@ func (m *AppModel) handleInput(input string) tea.Cmd {
 // updateViewportContent sets the viewport content based on current mode.
 // Centralizes the conditional viewport update that was duplicated 5+ times.
 func (m *AppModel) updateViewportContent() {
-	if m.showingCompileSummary {
+	if m.activeTab == tabCompile && m.compileResult != nil && !m.compiling {
+		m.viewport.SetContent(m.renderCompileSummaryContent())
+	} else if m.showingCompileSummary {
 		m.viewport.SetContent(m.renderCompileSummaryContent())
 	} else if m.reviewMode && m.reviewDraftPath != "" {
 		m.viewport.SetContent(m.renderFileViewContent())
@@ -1097,12 +1327,25 @@ func (m AppModel) buildStatusBar() string {
 	if m.statusText != "" {
 		left = prefix + m.statusText
 	} else {
-		// Compile indicator
-		compileAgo := formatDurationAgo(m.lastCompileTime)
-		compileIndicator := fmt.Sprintf("Last compile: %s", compileAgo)
-		if m.lastCompileTime == nil || time.Since(*m.lastCompileTime) > 7*24*time.Hour {
-			compileIndicator = lipgloss.NewStyle().Foreground(colorYellow).
-				Background(colorSurface0).Render(compileIndicator)
+		// Compile indicator: when compile is running AND user is on a different tab,
+		// show live phase. Otherwise show static "Last compile: Xd ago".
+		var compileIndicator string
+		if m.compiling && m.activeTab != tabCompile {
+			phaseLabel := "Starting"
+			if m.compileProgress != nil && m.compileProgress.PhaseNumber != "" {
+				phaseLabel = fmt.Sprintf("Phase %s/6", m.compileProgress.PhaseNumber)
+			}
+			elapsed := formatElapsed(time.Since(m.compileStartTime))
+			compileIndicator = lipgloss.NewStyle().Foreground(colorGreen).
+				Background(colorSurface0).Bold(true).
+				Render(fmt.Sprintf("%s Compile: %s · %s", m.spinner.View(), phaseLabel, elapsed))
+		} else {
+			compileAgo := formatDurationAgo(m.lastCompileTime)
+			compileIndicator = fmt.Sprintf("Last compile: %s", compileAgo)
+			if m.lastCompileTime == nil || time.Since(*m.lastCompileTime) > 7*24*time.Hour {
+				compileIndicator = lipgloss.NewStyle().Foreground(colorYellow).
+					Background(colorSurface0).Render(compileIndicator)
+			}
 		}
 
 		switch m.activeTab {
@@ -1123,6 +1366,13 @@ func (m AppModel) buildStatusBar() string {
 				left = prefix + " / search all · Enter open/browse"
 				right = "tab switch "
 			}
+		case tabCompile:
+			if m.compiling {
+				left = prefix + " Esc cancel · Tab to switch away"
+			} else {
+				left = prefix + " j/k scroll · Esc dismiss · Tab switch"
+			}
+			right = "tab switch "
 		default:
 			left = prefix
 		}
@@ -1148,8 +1398,34 @@ func (m AppModel) buildStatusBar() string {
 
 // Run starts the TUI application.
 func Run(vaultPath, filePath, fileContent string) error {
+	// Initialize debug logger from config (no-op if disabled)
+	if cfg, err := config.Load(); err == nil && cfg.Debug.Enabled {
+		if logErr := logging.Init(
+			cfg.Debug.Enabled,
+			cfg.Debug.LogFile,
+			cfg.Debug.Level,
+			cfg.Debug.TruncateOnStart,
+		); logErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize debug log: %v\n", logErr)
+		}
+		defer logging.Close()
+	}
+
+	logging.Info("obsidian-cli started",
+		"vaultPath", vaultPath,
+		"currentFile", filePath,
+	)
+
 	model := NewApp(vaultPath, filePath, fileContent)
 	p := tea.NewProgram(model)
+	teaProgram = p
 	_, err := p.Run()
+
+	if err != nil {
+		logging.Error("tea program exited with error", "err", err)
+	} else {
+		logging.Info("obsidian-cli stopped cleanly")
+	}
+
 	return err
 }

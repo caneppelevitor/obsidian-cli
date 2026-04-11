@@ -115,6 +115,36 @@ func CountDirContents(dir string) (folders, mdFiles int, err error) {
 	return folders, mdFiles, nil
 }
 
+// CountDirContentsRecursive walks the directory tree and returns the total
+// number of nested folders and .md files. Skips hidden directories (. prefix).
+func CountDirContentsRecursive(dir string) (folders, mdFiles int, err error) {
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil // skip unreadable entries, don't abort
+		}
+		if path == dir {
+			return nil // don't count the root itself
+		}
+		name := info.Name()
+		if strings.HasPrefix(name, ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			folders++
+		} else if strings.HasSuffix(name, ".md") {
+			mdFiles++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return folders, mdFiles, nil
+}
+
 // FileInfo holds metadata about a markdown file.
 type FileInfo struct {
 	RelPath  string

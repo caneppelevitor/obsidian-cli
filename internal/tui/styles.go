@@ -231,7 +231,19 @@ func applyEisenhowerTags(line string, tags map[string]string) string {
 // ─── Tab Bar ────────────────────────────────────────────────────────────────
 
 // RenderTabBar renders tabs with an underline indicator on the active tab.
+// Clamps activeTab to the valid range to prevent panics if the caller has a
+// stale index (e.g., a tab just disappeared).
 func RenderTabBar(tabs []string, activeTab int, width int) string {
+	if len(tabs) == 0 {
+		return ""
+	}
+	if activeTab < 0 {
+		activeTab = 0
+	}
+	if activeTab >= len(tabs) {
+		activeTab = len(tabs) - 1
+	}
+
 	var tabLine strings.Builder
 	var positions []struct{ start, end int }
 	pos := 2

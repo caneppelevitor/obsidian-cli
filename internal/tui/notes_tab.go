@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/caneppelevitor/obsidian-cli/internal/config"
 	"github.com/caneppelevitor/obsidian-cli/internal/content"
+	"github.com/caneppelevitor/obsidian-cli/internal/logging"
 	"github.com/caneppelevitor/obsidian-cli/internal/vault"
 )
 
@@ -179,6 +181,8 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 	cmd := strings.TrimPrefix(input, "/")
 	cmd = strings.ToLower(strings.TrimSpace(cmd))
 
+	logging.Debug("slash command", "cmd", cmd)
+
 	switch {
 	case cmd == "save":
 		return saveFileCmd(m.currentFile, m.fileContent)
@@ -214,17 +218,28 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 		return fetchVaultStatusCmd(m.vaultRootPath, m.lastCompileTime)
 
 	case cmd == "compile":
-		if m.compiling {
-			m.statusText = "Compile already in progress"
+		// If a compile tab is already present (running or showing cached result),
+		// just switch to it.
+		if m.compileTabVisible() {
+			m.activeTab = tabCompile
+			if m.compiling {
+				m.statusText = ""
+			}
 			return nil
 		}
 		if _, err := exec.LookPath("claude"); err != nil {
 			m.statusText = "Claude Code CLI not found. Install it: https://docs.anthropic.com/en/docs/claude-code"
 			return nil
 		}
+		logging.Info("compile triggered", "vaultRoot", m.vaultRootPath)
+		compileCmd, cancel := runCompileCmd(m.vaultRootPath)
 		m.compiling = true
-		m.loading = true
-		return tea.Batch(runCompileCmd(m.vaultRootPath), m.spinner.Tick)
+		m.compileStartTime = time.Now()
+		m.compileProgress = &CompileProgress{}
+		m.compileCancel = cancel
+		m.activeTab = tabCompile
+		m.input.Blur()
+		return tea.Batch(compileCmd, compileTickCmd(), m.spinner.Tick)
 
 	case cmd == "review":
 		reviewPath := vault.ReviewQueuePath(m.vaultRootPath)
@@ -238,6 +253,22 @@ func (m *AppModel) handleSlashCommand(input string) tea.Cmd {
 		m.loading = true
 		m.input.Blur()
 		return tea.Batch(loadReviewItemsCmd(m.vaultRootPath), m.spinner.Tick)
+
+	case cmd == "logs":
+		logPath := logging.LogFile()
+		if logPath == "" {
+			m.statusText = "Debug logging is disabled — enable via debug.enabled: true in config"
+			return nil
+		}
+		if _, err := os.Stat(logPath); err != nil {
+			m.statusText = fmt.Sprintf("Log file not found: %s", logPath)
+			return nil
+		}
+		m.activeTab = tabFiles
+		return func() tea.Msg {
+			data, err := vault.ReadFile(logPath)
+			return FileViewLoadedMsg{Content: data, Path: logPath, Err: err}
+		}
 
 	case strings.HasPrefix(cmd, "open "):
 		return m.handleOpenFile(strings.TrimSpace(cmd[5:]))
@@ -324,6 +355,7 @@ Commands:
   /status    Show vault health (inbox, queue, raw notes)
   /compile   Run knowledge compile via Claude Code
   /review    Open zettelkasten review queue
+  /logs      Open debug log file (requires debug.enabled: true in config)
   /help      Show this help
   /exit      Exit the application
 
@@ -332,13 +364,18 @@ Content Prefixes:
   -   text   Add an idea (bullet)
   ?   text   Add a question (bullet)
   !   text   Add an insight (bullet)
-  @   text   Clip to wiki/raw/
+  @   text   Capture a link (Links to Expand section)
 
 Navigation:
   Tab        Switch between tabs
   e          Enter edit mode (Daily Note)
   Ctrl+C     Exit
   Escape     Clear input / exit edit mode
+
+During /compile:
+  Esc        Cancel running compile
+  Tab        Background compile (keep using CLI)
+  /compile   View cached summary (after background compile completes)
 
 In Edit Mode:
   Full cursor editing of your note
